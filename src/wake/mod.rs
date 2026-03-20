@@ -42,8 +42,7 @@ fn routing_block(worker: &Worker) -> String {
          1. Review the output with: orca logs {name}\n\
          2. Summarize the output (include any PR links).\n\
          3. Send the summary via: {cmd_str}\n\
-         4. Do NOT reply in-session — the user won't see it. Use openclaw message send.\n\
-         5. Kill the worker: orca kill {name}",
+         4. Do NOT reply in-session — the user won't see it. Use openclaw message send.",
         name = worker.name,
     )
 }
@@ -72,9 +71,8 @@ fn wake_message(worker: &Worker) -> String {
     let mut msg = format!(
         "ORCA: worker {} ({}) finished.\n\
          \x20 orca logs {}    -- review output\n\
-         \x20 orca steer {}   -- send follow-up\n\
-         \x20 orca kill {}    -- close and free resources",
-        worker.name, worker.backend, worker.name, worker.name, worker.name,
+         \x20 orca steer {}   -- send follow-up",
+        worker.name, worker.backend, worker.name, worker.name,
     );
     msg.push_str(&routing_block(worker));
     msg
@@ -85,9 +83,8 @@ fn stuck_message(worker: &Worker, label: &str, snippet: &str) -> String {
         "ORCA: worker {} ({}) is stuck — {label}\n\
          \x20 orca logs {}    -- see full output\n\
          \x20 orca steer {} \"<response>\"  -- unblock it\n\
-         \x20 orca kill {}    -- give up and kill\n\
          ---\n{snippet}",
-        worker.name, worker.backend, worker.name, worker.name, worker.name,
+        worker.name, worker.backend, worker.name, worker.name,
     );
     msg.push_str(&routing_block(worker));
     msg
@@ -166,9 +163,8 @@ fn warn_message(worker: &Worker, reason: &str) -> String {
         "ORCA: worker {} ({}) may be done or stalled — {reason}\n\
          \x20 This is a soft signal; the worker may still be working.\n\
          \x20 orca logs {}    -- inspect output\n\
-         \x20 orca steer {} \"<follow-up>\"  -- nudge it\n\
-         \x20 orca kill {}    -- give up and kill",
-        worker.name, worker.backend, worker.name, worker.name, worker.name,
+         \x20 orca steer {} \"<follow-up>\"  -- nudge it",
+        worker.name, worker.backend, worker.name, worker.name,
     );
     msg.push_str(&routing_block(worker));
     msg

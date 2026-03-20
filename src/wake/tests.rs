@@ -40,7 +40,7 @@ fn wake_message_contains_worker_name() {
     assert!(msg.contains("claude"));
     assert!(msg.contains("orca logs alpha"));
     assert!(msg.contains("orca steer alpha"));
-    assert!(msg.contains("orca kill alpha"));
+    assert!(!msg.contains("orca kill"));
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn stuck_message_contains_all_parts() {
     assert!(msg.contains("Do you trust? [y/N]"));
     assert!(msg.contains("orca logs gamma"));
     assert!(msg.contains("orca steer gamma"));
-    assert!(msg.contains("orca kill gamma"));
+    assert!(!msg.contains("orca kill"));
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn routing_block_includes_channel() {
     assert!(block.contains("channel: general"));
     assert!(block.contains("ACTION REQUIRED:"));
     assert!(block.contains("orca logs test"));
-    assert!(block.contains("orca kill test"));
+    assert!(!block.contains("orca kill"));
     assert!(block.contains("openclaw message send --channel general"));
 }
 
@@ -194,7 +194,7 @@ fn warn_message_contains_reason() {
     assert!(msg.contains("soft signal"));
     assert!(msg.contains("orca logs w1"));
     assert!(msg.contains("orca steer w1"));
-    assert!(msg.contains("orca kill w1"));
+    assert!(!msg.contains("orca kill"));
 }
 
 #[test]

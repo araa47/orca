@@ -26,10 +26,7 @@ const REPORT_INSTRUCTIONS: &str = "\n\n---\n\
     \x20 orca report --worker {name} --event done --source agent\n\
     If you are blocked and need user input, run:\n\
     \x20 orca report --worker {name} --event blocked --source agent --message \"<reason>\"\n\
-    These commands are essential for orchestration. Do not skip them.\n\n\
-    CLEANUP: Before reporting done, kill all your sub-workers that have finished:\n\
-    \x20 orca killall --mine\n\
-    This frees worktrees and tmux windows. Do NOT leave done workers behind.\n\
+    These commands are essential for orchestration. Do not skip them.\n\
     ---\n";
 
 fn depth_emoji(depth: u32) -> &'static str {

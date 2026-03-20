@@ -69,7 +69,6 @@ orca spawn "fix the login bug" -b cc -d ~/proj --orchestrator openclaw \
 2. Summarize the results (include PR links if any)
 3. Send the summary via `openclaw message send --channel <ch> --target <target> --message <summary>`
 4. Do NOT reply in-session — the user won't see that. Use `openclaw message send`.
-5. Kill the worker: `orca kill <name>`
 
 ---
 
@@ -207,8 +206,8 @@ orca report -w <name> -e done              # Report worker lifecycle event (used
 
 ## Cleanup responsibility
 
-- **L1+ workers** (depth >= 1): Before reporting done, kill your sub-workers with `orca gc --mine`. You spawned them, you clean them up.
-- **L0 orchestrator** (top-level): Do NOT auto-clean workers. The human decides when to kill/gc — they may want to inspect logs or cherry-pick branches first.
+- **Do NOT kill or gc workers automatically.** The human decides when to kill/gc — they may want to inspect logs, review branches, or cherry-pick work first.
+- If the human explicitly asks you to clean up, use `orca gc --mine` (safe, scoped to your workers only).
 
 ## Recovering work after `orca kill` / `gc`
 
@@ -231,15 +230,12 @@ git stash pop                            # or: git stash apply stash@{n}
 - Spawn workers for independent tasks that can run in parallel
 - After spawning, stop and wait silently -- the daemon notifies you when workers finish
 - Use `orca list` / `orca status` only when the user asks what's happening
-- Kill individual workers when done: `orca kill <name>` (L0 only — let the human decide)
-- If you're an L1+ worker, run `orca gc --mine` before reporting done to clean up your sub-workers
+- Do NOT kill or gc workers yourself — the human decides when to clean up
 - Always pass `--orchestrator` with the correct value for your agent type
-- Use `orca killall --mine` and `orca gc --mine` to clean up -- this only touches YOUR workers
 
 ## DON'T
 
-- **NEVER use `orca killall --force` or `orca gc --force` unless the human explicitly asks** -- these are global and will kill other orchestrators' workers
-- **NEVER run `orca kill` on a worker you didn't spawn** unless the human tells you to -- it will warn you if you try
+- **NEVER run `orca kill`, `orca killall`, or `orca gc` unless the human explicitly asks** -- killing workers can destroy in-progress work and kill orchestrator panes
 - Don't sleep or poll -- no `sleep`, no `orca list` loops, no periodic checks. Just stop and wait for the daemon notification.
 - Don't use tmux commands directly -- always go through `orca`
 - Don't spawn more than 4-5 workers at once unless explicitly asked
