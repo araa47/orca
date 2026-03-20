@@ -1,6 +1,7 @@
 //! Async tmux helpers.
 
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 use regex::Regex;
 use tokio::process::Command;
@@ -56,9 +57,10 @@ pub async fn tmux(args: &[&str]) -> (i32, String) {
 ///
 /// Matches the Python `_normalize_window_name` — removes any leading
 /// non-alphanumeric, non-`_-` characters so that "🐳fox" becomes "fox".
+static NORMALIZE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[^A-Za-z0-9_-]+").unwrap());
+
 pub fn normalize_window_name(name: &str) -> String {
-    let re = Regex::new(r"^[^A-Za-z0-9_-]+").expect("valid regex");
-    re.replace(name, "").into_owned()
+    NORMALIZE_RE.replace(name, "").into_owned()
 }
 
 /// Return `true` when tmux stderr indicates the target (session / window /
@@ -1213,5 +1215,24 @@ mod tests {
     #[test]
     fn target_missing_case_insensitive() {
         assert!(tmux_target_missing("CAN'T FIND TARGET: FOO"));
+    }
+
+    #[test]
+    fn normalize_consistent_across_calls() {
+        // Verifies the static regex produces identical results on repeated calls
+        for _ in 0..10 {
+            assert_eq!(normalize_window_name("🐋fox"), "fox");
+            assert_eq!(normalize_window_name("plain"), "plain");
+            assert_eq!(normalize_window_name("🐳🐬deep"), "deep");
+            assert_eq!(normalize_window_name(""), "");
+        }
+    }
+
+    #[test]
+    fn normalize_special_leading_chars() {
+        assert_eq!(normalize_window_name("**starred"), "starred");
+        assert_eq!(normalize_window_name("  spaced"), "spaced");
+        assert_eq!(normalize_window_name("!!bang"), "bang");
+        assert_eq!(normalize_window_name(".dotted"), "dotted");
     }
 }
