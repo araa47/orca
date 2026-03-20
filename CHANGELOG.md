@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-03-20
+
+### Added
+
+- **Auto-stash before worktree removal:** `orca kill`, `killall`, and `gc` now run `git stash push -u` on dirty worktrees before removing them, preserving uncommitted work. Stashes attach to the main repo and can be recovered with `git stash list` / `git stash pop` from the project root.
+- **`--no-stash` flag:** Pass `--no-stash` to `kill`, `killall`, or `gc` to skip auto-stashing (automation escape hatch).
+- **`STASH_PRESERVE` audit log entries:** When a stash is created, a `STASH_PRESERVE` line is appended to `audit.log` for correlation with `KILL`/`GC` events.
+- **`config::audit()` shared function:** The audit log writer is now accessible from any module (previously private to `cli.rs`).
+
+### Changed
+
+- **SPEC.md:** Added Git prerequisite section, `ensure_git_repo` auto-init documentation, cleanup/stash recovery instructions, and a "Where to Look When Things Go Wrong" audit reference table.
+- **README.md:** Git listed as an explicit prerequisite.
+- **SKILL.md:** New "Recovering work after `orca kill`/`gc`" section for orchestrators, with stash recovery instructions and debugging pointers.
+
 ## [0.0.4] - 2026-03-20
 
 ### Added
@@ -61,7 +76,8 @@ _(This release was tagged without a changelog entry; summarized here retroactive
 - Claude Code, Codex, and Cursor as worker backends.
 - Pre-commit/prek hooks (fmt, clippy, yaml, codespell); CI split into job-prek and job-test.
 
-[Unreleased]: https://github.com/araa47/orca/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/araa47/orca/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/araa47/orca/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/araa47/orca/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/araa47/orca/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/araa47/orca/compare/v0.0.1...v0.0.2

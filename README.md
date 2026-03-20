@@ -34,6 +34,7 @@ Each worker gets its own **git worktree** (isolated code sandbox) and **tmux win
 
 ### Prerequisites
 
+- [Git](https://git-scm.com/) (2.20+) — Orca uses worktrees and stash; auto-initializes non-repo directories (see [SPEC.md](SPEC.md))
 - [Rust toolchain](https://rustup.rs/) (1.85+)
 - [tmux](https://github.com/tmux/tmux) (3.0+)
 - At least one AI coding agent: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), or [Cursor](https://cursor.com)

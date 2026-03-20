@@ -14,22 +14,7 @@ use crate::state::{self, Worker};
 use crate::tmux;
 use crate::worktree;
 
-// ---------------------------------------------------------------------------
-// Audit log
-// ---------------------------------------------------------------------------
-
-fn audit(msg: &str) {
-    let _ = config::ensure_home();
-    let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
-    let line = format!("[{ts}] {msg}\n");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(config::audit_log_file())
-    {
-        let _ = std::io::Write::write_all(&mut f, line.as_bytes());
-    }
-}
+use crate::config::audit;
 
 // ---------------------------------------------------------------------------
 // Depth labels
@@ -337,6 +322,10 @@ enum Commands {
     Kill {
         /// Worker name
         name: String,
+
+        /// Skip stashing uncommitted changes before removing the worktree
+        #[arg(long = "no-stash")]
+        no_stash: bool,
     },
 
     /// Kill workers. Requires --mine, --pane, --session-id, or --force.
@@ -356,6 +345,10 @@ enum Commands {
         /// Kill ALL workers globally (may affect other orchestrators)
         #[arg(long = "force")]
         force: bool,
+
+        /// Skip stashing uncommitted changes before removing worktrees
+        #[arg(long = "no-stash")]
+        no_stash: bool,
     },
 
     /// Clean up done/dead workers. Requires --mine, --pane, --session-id, or --force.
@@ -375,6 +368,10 @@ enum Commands {
         /// Clean ALL done/dead workers globally
         #[arg(long = "force")]
         force: bool,
+
+        /// Skip stashing uncommitted changes before removing worktrees
+        #[arg(long = "no-stash")]
+        no_stash: bool,
     },
 
     /// Daemon management.
@@ -456,19 +453,21 @@ pub fn run() {
             source,
         } => cmd_report(&worker, &event, &message, &source),
         Commands::Steer { name, message } => cmd_steer(&name, message),
-        Commands::Kill { name } => cmd_kill(&name),
+        Commands::Kill { name, no_stash } => cmd_kill(&name, no_stash),
         Commands::Killall {
             pane,
             session_id,
             mine,
             force,
-        } => cmd_killall(pane, session_id, mine, force),
+            no_stash,
+        } => cmd_killall(pane, session_id, mine, force, no_stash),
         Commands::Gc {
             pane,
             session_id,
             mine,
             force,
-        } => cmd_gc(pane, session_id, mine, force),
+            no_stash,
+        } => cmd_gc(pane, session_id, mine, force, no_stash),
         Commands::Daemon { command } => match command {
             DaemonCommands::Start => cmd_daemon_start(),
             DaemonCommands::Stop => cmd_daemon_stop(),
@@ -875,7 +874,7 @@ fn cmd_steer(name: &str, message: Vec<String>) {
     println!("Steered: {name}");
 }
 
-fn cmd_kill(name: &str) {
+fn cmd_kill(name: &str, no_stash: bool) {
     let Some(w) = state::get_worker(name) else {
         eprintln!("Error: Worker '{name}' not found");
         process::exit(1);
@@ -901,6 +900,9 @@ fn cmd_kill(name: &str) {
             tmux::kill_window(&target).await;
         }
         if w.workdir.ends_with(&format!("/.worktrees/{name}")) {
+            if !no_stash {
+                worktree::stash_if_dirty(&w.dir, name).await;
+            }
             worktree::remove_worktree(&w.dir, name).await;
         }
     });
@@ -959,7 +961,7 @@ fn filter_workers_by_scope(
         .collect()
 }
 
-fn cmd_killall(mut pane: String, session_id: String, mine: bool, force: bool) {
+fn cmd_killall(mut pane: String, session_id: String, mine: bool, force: bool, no_stash: bool) {
     if !mine && pane.is_empty() && session_id.is_empty() && !force {
         eprintln!(
             "Error: specify --mine, --pane, --session-id, or --force.\n\
@@ -994,6 +996,9 @@ fn cmd_killall(mut pane: String, session_id: String, mine: bool, force: bool) {
                 tmux::kill_window(&target).await;
             }
             if w.workdir.ends_with(&format!("/.worktrees/{wname}")) {
+                if !no_stash {
+                    worktree::stash_if_dirty(&w.dir, wname).await;
+                }
                 worktree::remove_worktree(&w.dir, wname).await;
             }
         });
@@ -1019,7 +1024,7 @@ fn cmd_killall(mut pane: String, session_id: String, mine: bool, force: bool) {
     ));
 }
 
-fn cmd_gc(mut pane: String, session_id: String, mine: bool, force: bool) {
+fn cmd_gc(mut pane: String, session_id: String, mine: bool, force: bool, no_stash: bool) {
     if !mine && pane.is_empty() && session_id.is_empty() && !force {
         eprintln!(
             "Error: specify --mine, --pane, --session-id, or --force.\n\
@@ -1047,15 +1052,16 @@ fn cmd_gc(mut pane: String, session_id: String, mine: bool, force: bool) {
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     for (name, w) in &to_gc {
         rt.block_on(async {
-            // Kill tmux pane/window if still alive
             if !w.pane_id.is_empty() && tmux::pane_alive(&w.pane_id).await {
                 tmux::kill_pane(&w.pane_id).await;
             } else if tmux::window_exists(name, config::tmux_session()).await {
                 let target = format!("{}:{}", config::tmux_session(), name);
                 tmux::kill_window(&target).await;
             }
-            // Remove worktree
             if w.workdir.ends_with(&format!("/.worktrees/{name}")) {
+                if !no_stash {
+                    worktree::stash_if_dirty(&w.dir, name).await;
+                }
                 worktree::remove_worktree(&w.dir, name).await;
             }
         });
@@ -2243,6 +2249,12 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_kill_no_stash() {
+        let cli = Cli::try_parse_from(["orca", "kill", "w1", "--no-stash"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
     fn test_cli_parse_kill_missing_name() {
         let cli = Cli::try_parse_from(["orca", "kill"]);
         assert!(cli.is_err());
@@ -2273,6 +2285,12 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_killall_no_stash() {
+        let cli = Cli::try_parse_from(["orca", "killall", "--force", "--no-stash"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
     fn test_cli_parse_gc_force() {
         let cli = Cli::try_parse_from(["orca", "gc", "--force"]);
         assert!(cli.is_ok());
@@ -2281,6 +2299,12 @@ mod tests {
     #[test]
     fn test_cli_parse_gc_mine() {
         let cli = Cli::try_parse_from(["orca", "gc", "--mine"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parse_gc_no_stash() {
+        let cli = Cli::try_parse_from(["orca", "gc", "--force", "--no-stash"]);
         assert!(cli.is_ok());
     }
 

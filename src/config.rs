@@ -188,6 +188,20 @@ pub fn ensure_home() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Append a timestamped line to `audit.log`. Usable from any module.
+pub fn audit(msg: &str) {
+    let _ = ensure_home();
+    let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+    let line = format!("[{ts}] {msg}\n");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(audit_log_file())
+    {
+        let _ = std::io::Write::write_all(&mut f, line.as_bytes());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
