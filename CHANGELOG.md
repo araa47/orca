@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-03-21
+
+### Changed
+
+- **Explicit spawn lineage is now mandatory:** `orca spawn` requires `--spawned-by` on every call. Use `--spawned-by root` (or `root:<scope>`) for top-level orchestrator spawns, and `--spawned-by <worker-name>` for sub-workers. Orca no longer relies on implicit parent inference for correctness.
+
+### Fixed
+
+- **Orphaned sub-workers causing wrong emoji / wake target / premature completion:** delegated workers that forgot lineage now fail closed instead of silently becoming root `🐳 L1` workers. This prevents missing `spawned_by` from breaking `has_running_children`, routing completion notifications to the wrong orchestrator, or waking OpenClaw while an intermediate worker is only waiting on its own children.
+
 ## [0.0.6] - 2026-03-20
 
 ### Fixed

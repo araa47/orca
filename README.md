@@ -103,7 +103,7 @@ This project has Orca installed for parallel task execution. When facing tasks
 that can be broken into independent pieces, use `orca spawn` to delegate work
 to parallel workers instead of doing everything sequentially.
 
-- `orca spawn "<task>" -b cc -d . --orchestrator cc` to spawn workers
+- `orca spawn "<task>" -b cc -d . --orchestrator cc --spawned-by root` to spawn workers
 - `orca list` to check status, `orca logs <name>` to review output
 - `orca kill <name>` to clean up finished workers
 - After spawning, stop and wait -- the daemon notifies you when workers finish
@@ -119,7 +119,7 @@ Never run them directly via exec -- use orca workers so the user can attach to s
 
 - Do not use ACP for coding-agent requests
 - Default CLI: Claude Code (-b cc), Codex (-b cx), Cursor (-b cu)
-- Spawn pattern: `orca spawn "<task>" -b cc -d ~/path/to/repo --orchestrator openclaw --session-id <current-session-id>`
+- Spawn pattern: `orca spawn "<task>" -b cc -d ~/path/to/repo --orchestrator openclaw --session-id <current-session-id> --spawned-by root`
 - After spawning, wait silently -- orca daemon notifies when done. Don't poll with `orca list` loops.
 - Use `orca logs <name>`, `orca steer <name> "<msg>"`, `orca kill <name>` when done
 ```

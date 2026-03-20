@@ -35,52 +35,42 @@ fn depth_label(depth: u32) -> String {
     format!("{emoji} L{depth}")
 }
 
-/// When `--spawned-by` names a known parent, use that parent's `depth` as the CLI
-/// `--depth` so child workers get L2/L3 labels and `spawned_by` linkage (daemon idle
-/// detection). When `--spawned-by` is empty, `ORCA_WORKER_NAME` is used if it matches
-/// a tracked worker (spawn from inside a worker shell — typical for OpenClaw L1 → L2).
+const ROOT_SPAWNED_BY: &str = "root";
+
+/// `--spawned-by` is mandatory so the caller must choose between:
+/// - a real parent worker name (`fin`, `audit-lead`, ...)
+/// - an explicit top-level marker (`root` or `root:<scope>`)
+///
+/// Top-level markers are normalized to the empty string in state so the existing
+/// root/child tree logic continues to work without a wider schema change.
+fn is_root_spawn_marker(spawned_by: &str) -> bool {
+    let spawned_by = spawned_by.trim();
+    spawned_by == ROOT_SPAWNED_BY || spawned_by.starts_with("root:")
+}
+
+fn normalize_spawned_by(spawned_by: &str) -> String {
+    let spawned_by = spawned_by.trim();
+    if is_root_spawn_marker(spawned_by) {
+        String::new()
+    } else {
+        spawned_by.to_string()
+    }
+}
+
+/// When `--spawned-by` names a known parent worker, use that worker's stored
+/// `depth` as the CLI `--depth` so child workers get L2/L3 labels and parentage.
+/// Explicit root markers normalize to empty `spawned_by` and keep the CLI depth.
 fn resolve_spawn_lineage(
-    mut spawned_by: String,
+    spawned_by: String,
     mut depth: u32,
-    implicit_parent: Option<&str>,
     workers: &std::collections::HashMap<String, Worker>,
 ) -> (String, u32) {
-    if spawned_by.is_empty()
-        && let Some(name) = implicit_parent
-        && !name.is_empty()
-        && workers.contains_key(name)
-    {
-        spawned_by = name.to_string();
-    }
     if !spawned_by.is_empty()
         && let Some(parent) = workers.get(&spawned_by)
     {
         depth = parent.depth;
     }
     (spawned_by, depth)
-}
-
-/// Infer parent worker when a spawn is initiated from inside an existing worker pane.
-///
-/// Priority:
-/// 1) `ORCA_WORKER_NAME` when present and tracked (strict; stale values are handled by validation)
-/// 2) current tmux pane lookup against tracked workers' `pane_id`
-fn infer_implicit_parent(
-    workers: &std::collections::HashMap<String, Worker>,
-    env_worker_name: Option<&str>,
-    current_pane: Option<&str>,
-) -> Option<String> {
-    if let Some(name) = env_worker_name.filter(|s| !s.is_empty()) {
-        if workers.contains_key(name) {
-            return Some(name.to_string());
-        }
-        return None;
-    }
-
-    let pane = current_pane.filter(|p| !p.is_empty())?;
-    workers
-        .iter()
-        .find_map(|(name, w)| (w.pane_id == pane).then(|| name.clone()))
 }
 
 /// Spawn policy flags (normally from `ORCA_*` env vars). Separated for unit tests.
@@ -111,8 +101,10 @@ const VALID_ORCHESTRATORS: &[&str] = &[
 ];
 
 /// Enforce agent-safe spawn defaults: real orchestrator, OpenClaw reply routing, valid parent links.
+#[allow(clippy::too_many_arguments)]
 fn validate_spawn_context(
     orchestrator: &str,
+    raw_spawned_by: &str,
     spawned_by: &str,
     implicit_self: Option<&str>,
     workers: &std::collections::HashMap<String, Worker>,
@@ -146,11 +138,17 @@ fn validate_spawn_context(
                 .into(),
         );
     }
+    if raw_spawned_by.trim().is_empty() {
+        return Err("Error: --spawned-by is required. \
+             Use `--spawned-by root` (or `root:<scope>`) for a top-level orchestrator spawn, \
+             or `--spawned-by <worker-name>` when a worker spawns a sub-worker."
+            .into());
+    }
     if !spawned_by.is_empty() && !workers.contains_key(spawned_by) {
         return Err(format!(
             "Error: --spawned-by '{spawned_by}' does not match any tracked worker. \
-             Use the parent's name from `orca list`, spawn from that worker's shell (ORCA_WORKER_NAME), \
-             or fix your command."
+             Use the parent's worker name from `orca list`, or use `--spawned-by root` \
+             (or `root:<scope>`) only for a true top-level orchestrator spawn."
         ));
     }
     if let Some(self_name) = implicit_self.filter(|s| !s.is_empty()) {
@@ -158,10 +156,10 @@ fn validate_spawn_context(
             if spawned_by != self_name {
                 return Err(format!(
                     "Error: ORCA_WORKER_NAME is '{self_name}' but parent lineage resolved to '{}' (expected '{self_name}'). \
-                     Sub-workers must record you as parent: run `orca spawn` from this worker's shell, \
-                     or unset ORCA_WORKER_NAME and pass --spawned-by with an explicit parent.",
+                     Sub-workers must record you as parent with `--spawned-by {self_name}`. \
+                     Root markers are only valid for top-level orchestrator spawns.",
                     if spawned_by.is_empty() {
-                        "(empty)"
+                        ROOT_SPAWNED_BY
                     } else {
                         spawned_by
                     }
@@ -171,7 +169,8 @@ fn validate_spawn_context(
             return Err(format!(
                 "Error: ORCA_WORKER_NAME is '{self_name}' but that worker is not in Orca state. \
                  The daemon cannot link sub-workers without a tracked parent — \
-                 unset ORCA_WORKER_NAME, or pass --spawned-by <running-parent-name>."
+                 unset ORCA_WORKER_NAME, or pass --spawned-by <running-parent-name>. \
+                 Do not use `--spawned-by root` from a stale worker shell."
             ));
         }
     }
@@ -280,9 +279,9 @@ enum Commands {
         #[arg(long = "depth", default_value_t = 0)]
         depth: u32,
 
-        /// Parent worker for sub-workers. Inside a tracked worker shell, inferred from ORCA_WORKER_NAME.
-        /// If you spawn from automation without that env, pass this explicitly or the child will look like a root L1 worker.
-        #[arg(long = "spawned-by", default_value = "")]
+        /// Required lineage marker. Use `root` / `root:<scope>` for top-level spawns,
+        /// or the parent worker name for sub-workers.
+        #[arg(long = "spawned-by", required = true)]
         spawned_by: String,
     },
 
@@ -540,22 +539,16 @@ fn cmd_spawn(
     let implicit_env = std::env::var("ORCA_WORKER_NAME")
         .ok()
         .filter(|s| !s.is_empty());
-    let current_pane = if implicit_env.is_none() {
-        let p = tmux::detect_current_pane();
-        (!p.is_empty()).then_some(p)
-    } else {
-        None
-    };
-    let implicit =
-        infer_implicit_parent(&workers, implicit_env.as_deref(), current_pane.as_deref());
-    let (spawned_by, depth) =
-        resolve_spawn_lineage(spawned_by, depth, implicit.as_deref(), &workers);
+    let raw_spawned_by = spawned_by;
+    let normalized_spawned_by = normalize_spawned_by(&raw_spawned_by);
+    let (spawned_by, depth) = resolve_spawn_lineage(normalized_spawned_by, depth, &workers);
 
     let spawn_env = SpawnValidateEnv::from_process_env();
     if let Err(msg) = validate_spawn_context(
         &orchestrator,
+        &raw_spawned_by,
         &spawned_by,
-        implicit_env.as_deref().or(implicit.as_deref()),
+        implicit_env.as_deref(),
         &workers,
         &reply_channel,
         &reply_to,
@@ -1363,30 +1356,19 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_spawn_lineage_top_level() {
+    fn test_root_spawn_markers_normalize_to_empty_parent() {
         let workers = std::collections::HashMap::new();
-        let (sb, d) = resolve_spawn_lineage(String::new(), 0, None, &workers);
+        let (sb, d) = resolve_spawn_lineage(normalize_spawned_by("root"), 0, &workers);
         assert_eq!(sb, "");
         assert_eq!(d, 0);
-    }
-
-    #[test]
-    fn test_resolve_spawn_lineage_implicit_parent() {
-        let mut workers = std::collections::HashMap::new();
-        workers.insert(
-            "orch".into(),
-            make_worker_with("orch", "claude", "running", 1),
-        );
-        let (sb, d) = resolve_spawn_lineage(String::new(), 0, Some("orch"), &workers);
-        assert_eq!(sb, "orch");
-        assert_eq!(d, 1);
+        assert_eq!(normalize_spawned_by("root:%149"), "");
     }
 
     #[test]
     fn test_resolve_spawn_lineage_explicit_spawned_by_sets_depth() {
         let mut workers = std::collections::HashMap::new();
         workers.insert("p".into(), make_worker_with("p", "codex", "running", 2));
-        let (sb, d) = resolve_spawn_lineage("p".into(), 0, None, &workers);
+        let (sb, d) = resolve_spawn_lineage("p".into(), 0, &workers);
         assert_eq!(sb, "p");
         assert_eq!(d, 2);
     }
@@ -1394,50 +1376,19 @@ mod tests {
     #[test]
     fn test_resolve_spawn_lineage_unknown_parent_keeps_cli_depth() {
         let workers = std::collections::HashMap::new();
-        let (sb, d) = resolve_spawn_lineage("ghost".into(), 1, None, &workers);
+        let (sb, d) = resolve_spawn_lineage("ghost".into(), 1, &workers);
         assert_eq!(sb, "ghost");
         assert_eq!(d, 1);
     }
 
     #[test]
-    fn test_infer_implicit_parent_prefers_tracked_env_worker_name() {
-        let mut workers = std::collections::HashMap::new();
-        let mut w = make_worker_with("w1", "claude", "running", 1);
-        w.pane_id = "%9".into();
-        workers.insert("w1".into(), w);
-
-        let inferred = infer_implicit_parent(&workers, Some("w1"), Some("%7"));
-        assert_eq!(inferred.as_deref(), Some("w1"));
-    }
-
-    #[test]
-    fn test_infer_implicit_parent_falls_back_to_pane_match() {
-        let mut workers = std::collections::HashMap::new();
-        let mut w = make_worker_with("pane-parent", "claude", "running", 1);
-        w.pane_id = "%42".into();
-        workers.insert("pane-parent".into(), w);
-
-        let inferred = infer_implicit_parent(&workers, None, Some("%42"));
-        assert_eq!(inferred.as_deref(), Some("pane-parent"));
-    }
-
-    #[test]
-    fn test_infer_implicit_parent_returns_none_for_unknown_env_or_pane() {
-        let workers = std::collections::HashMap::new();
-        assert!(infer_implicit_parent(&workers, Some("ghost"), Some("%1")).is_none());
-        assert!(infer_implicit_parent(&workers, None, Some("%1")).is_none());
-    }
-
-    #[test]
-    fn test_pane_inferred_parent_advances_child_depth_to_l2() {
+    fn test_explicit_parent_advances_child_depth_to_l2() {
         let mut workers = std::collections::HashMap::new();
         let mut parent = make_worker_with("mud", "claude", "running", 1);
         parent.pane_id = "%109".into();
         workers.insert("mud".into(), parent);
 
-        let implicit = infer_implicit_parent(&workers, None, Some("%109"));
-        let (spawned_by, cli_depth) =
-            resolve_spawn_lineage(String::new(), 0, implicit.as_deref(), &workers);
+        let (spawned_by, cli_depth) = resolve_spawn_lineage("mud".into(), 0, &workers);
         assert_eq!(spawned_by, "mud");
         assert_eq!(cli_depth + 1, 2);
         assert_eq!(depth_label(cli_depth + 1), "🐬 L2");
@@ -1455,6 +1406,7 @@ mod tests {
         let workers = HashMap::new();
         let err = validate_spawn_context(
             "ccc",
+            "root",
             "",
             None,
             &workers,
@@ -1470,6 +1422,7 @@ mod tests {
             assert!(
                 validate_spawn_context(
                     bad,
+                    "root",
                     "",
                     None,
                     &workers,
@@ -1491,7 +1444,7 @@ mod tests {
             allow_openclaw_without_reply: true,
         };
         for orch in VALID_ORCHESTRATORS {
-            validate_spawn_context(orch, "", None, &workers, "", "", &env_permissive)
+            validate_spawn_context(orch, "root", "", None, &workers, "", "", &env_permissive)
                 .unwrap_or_else(|e| panic!("should accept orchestrator '{orch}': {e}"));
         }
     }
@@ -1502,6 +1455,7 @@ mod tests {
         assert!(
             validate_spawn_context(
                 "none",
+                "root",
                 "",
                 None,
                 &workers,
@@ -1520,7 +1474,24 @@ mod tests {
             allow_no_orchestrator: true,
             allow_openclaw_without_reply: false,
         };
-        validate_spawn_context("none", "", None, &workers, "", "", &env).unwrap();
+        validate_spawn_context("none", "root", "", None, &workers, "", "", &env).unwrap();
+    }
+
+    #[test]
+    fn validate_requires_spawned_by_argument() {
+        let workers = HashMap::new();
+        let err = validate_spawn_context(
+            "cc",
+            "",
+            "",
+            None,
+            &workers,
+            "",
+            "",
+            &strict_spawn_validate_env(),
+        )
+        .unwrap_err();
+        assert!(err.contains("--spawned-by is required"), "got: {err}");
     }
 
     #[test]
@@ -1529,6 +1500,7 @@ mod tests {
         assert!(
             validate_spawn_context(
                 "cc",
+                "nope",
                 "nope",
                 None,
                 &workers,
@@ -1546,6 +1518,7 @@ mod tests {
         assert!(
             validate_spawn_context(
                 "openclaw",
+                "root",
                 "",
                 None,
                 &workers,
@@ -1557,6 +1530,7 @@ mod tests {
         );
         validate_spawn_context(
             "openclaw",
+            "root",
             "",
             None,
             &workers,
@@ -1577,6 +1551,7 @@ mod tests {
         assert!(
             validate_spawn_context(
                 "cc",
+                "root",
                 "",
                 Some("elm"),
                 &workers,
@@ -1587,10 +1562,11 @@ mod tests {
             .is_err()
         );
 
-        let (sb, _) = resolve_spawn_lineage(String::new(), 0, Some("elm"), &workers);
+        let (sb, _) = resolve_spawn_lineage("elm".into(), 0, &workers);
         assert_eq!(sb, "elm");
         validate_spawn_context(
             "cc",
+            "elm",
             &sb,
             Some("elm"),
             &workers,
@@ -1612,11 +1588,12 @@ mod tests {
             "foo".into(),
             make_worker_with("foo", "claude", "running", 1),
         );
-        let (sb, _) = resolve_spawn_lineage("foo".into(), 0, Some("elm"), &workers);
+        let (sb, _) = resolve_spawn_lineage("foo".into(), 0, &workers);
         assert_eq!(sb, "foo");
         assert!(
             validate_spawn_context(
                 "cc",
+                "foo",
                 &sb,
                 Some("elm"),
                 &workers,
@@ -1637,6 +1614,7 @@ mod tests {
         );
         validate_spawn_context(
             "cc",
+            "parent",
             "parent",
             Some("stale-dead-worker"),
             &workers,
@@ -1660,14 +1638,13 @@ mod tests {
     }
 
     #[test]
-    fn test_hierarchy_worker_inside_l1_implicit_parent_gets_l2() {
+    fn test_hierarchy_worker_inside_l1_explicit_parent_gets_l2() {
         let mut workers = std::collections::HashMap::new();
         workers.insert(
             "l1-worker".into(),
             make_worker_with("l1-worker", "claude", "running", 1),
         );
-        let (spawned_by, cli_depth) =
-            resolve_spawn_lineage(String::new(), 0, Some("l1-worker"), &workers);
+        let (spawned_by, cli_depth) = resolve_spawn_lineage("l1-worker".into(), 0, &workers);
         assert_eq!(spawned_by, "l1-worker");
         assert_eq!(cli_depth, 1);
         let stored = cli_depth + 1;
@@ -1679,7 +1656,7 @@ mod tests {
     fn test_hierarchy_explicit_spawned_by_depth_2_parent_yields_l3() {
         let mut workers = std::collections::HashMap::new();
         workers.insert("l2".into(), make_worker_with("l2", "codex", "running", 2));
-        let (spawned_by, cli_depth) = resolve_spawn_lineage("l2".into(), 0, None, &workers);
+        let (spawned_by, cli_depth) = resolve_spawn_lineage("l2".into(), 0, &workers);
         assert_eq!(spawned_by, "l2");
         assert_eq!(cli_depth, 2);
         assert_eq!(depth_label(cli_depth + 1), "🐟 L3");
@@ -2210,7 +2187,8 @@ mod tests {
 
     #[test]
     fn test_cli_parse_spawn_basic() {
-        let cli = Cli::try_parse_from(["orca", "spawn", "build the widget"]);
+        let cli =
+            Cli::try_parse_from(["orca", "spawn", "build the widget", "--spawned-by", "root"]);
         assert!(cli.is_ok(), "spawn parse failed: {:?}", cli.err());
     }
 
@@ -2242,7 +2220,16 @@ mod tests {
 
     #[test]
     fn test_cli_parse_spawn_multi_word_task() {
-        let cli = Cli::try_parse_from(["orca", "spawn", "implement", "the", "new", "feature"]);
+        let cli = Cli::try_parse_from([
+            "orca",
+            "spawn",
+            "implement",
+            "the",
+            "new",
+            "feature",
+            "--spawned-by",
+            "root",
+        ]);
         assert!(cli.is_ok());
     }
 
@@ -2445,6 +2432,8 @@ mod tests {
             "thread-abc",
             "--session-id",
             "sid-99",
+            "--spawned-by",
+            "root",
         ]);
         assert!(cli.is_ok());
     }
