@@ -17,8 +17,10 @@ jobs:
               with:
                   components: llvm-tools-preview
 
-            - name: Install cargo-llvm-cov
-              uses: taiki-e/install-action@cargo-llvm-cov
+            - name: Install cargo-nextest and cargo-llvm-cov
+              uses: taiki-e/install-action@v2
+              with:
+                  tool: nextest,cargo-llvm-cov
 
             - name: Cache cargo registry & build
               uses: actions/cache@v4
@@ -30,9 +32,9 @@ jobs:
                   key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
                   restore-keys: rust-${{ runner.os }}-
 
-            - name: Run tests with coverage
+            - name: Run tests with coverage (parallel via nextest)
               run: |
-                  cargo llvm-cov --no-report
+                  cargo llvm-cov nextest --no-report --no-fail-fast
                   cargo llvm-cov report --color never 2>&1 | tee coverage-raw.txt
                   grep -E '^\S.*\.rs|^-{10,}|^TOTAL' coverage-raw.txt > coverage-table.txt || true
 
