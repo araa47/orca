@@ -35,17 +35,17 @@ fn depth_label(depth: u32) -> String {
     format!("{emoji} L{depth}")
 }
 
-const ROOT_SPAWNED_BY: &str = "root";
+const L0_SPAWN_MARKERS: &[&str] = &["root", "openclaw"];
 
 /// `--spawned-by` is mandatory so the caller must choose between:
 /// - a real parent worker name (`fin`, `audit-lead`, ...)
-/// - an explicit top-level marker (`root` or `root:<scope>`)
+/// - an L0 marker: `openclaw` (preferred) or legacy `root`
 ///
-/// Top-level markers are normalized to the empty string in state so the existing
+/// L0 markers are normalized to the empty string in state so the existing
 /// root/child tree logic continues to work without a wider schema change.
 fn is_root_spawn_marker(spawned_by: &str) -> bool {
     let spawned_by = spawned_by.trim();
-    spawned_by == ROOT_SPAWNED_BY || spawned_by.starts_with("root:")
+    L0_SPAWN_MARKERS.contains(&spawned_by) || spawned_by.starts_with("root:")
 }
 
 fn normalize_spawned_by(spawned_by: &str) -> String {
@@ -59,7 +59,7 @@ fn normalize_spawned_by(spawned_by: &str) -> String {
 
 /// When `--spawned-by` names a known parent worker, use that worker's stored
 /// `depth` as the CLI `--depth` so child workers get L2/L3 labels and parentage.
-/// Explicit root markers normalize to empty `spawned_by` and keep the CLI depth.
+/// L0 markers normalize to empty `spawned_by` and keep the CLI depth.
 fn resolve_spawn_lineage(
     spawned_by: String,
     mut depth: u32,
@@ -68,7 +68,7 @@ fn resolve_spawn_lineage(
     if !spawned_by.is_empty()
         && let Some(parent) = workers.get(&spawned_by)
     {
-        depth = parent.depth;
+        depth = parent.depth + 1;
     }
     (spawned_by, depth)
 }
@@ -140,26 +140,26 @@ fn validate_spawn_context(
     }
     if raw_spawned_by.trim().is_empty() {
         return Err("Error: --spawned-by is required. \
-             Use `--spawned-by root` (or `root:<scope>`) for a top-level orchestrator spawn, \
-             or `--spawned-by <worker-name>` when a worker spawns a sub-worker."
+             Pass your worker name (from ORCA_WORKER_NAME or `orca list`). \
+             Only OpenClaw L0 uses `--spawned-by openclaw`."
             .into());
     }
     if !spawned_by.is_empty() && !workers.contains_key(spawned_by) {
         return Err(format!(
             "Error: --spawned-by '{spawned_by}' does not match any tracked worker. \
-             Use the parent's worker name from `orca list`, or use `--spawned-by root` \
-             (or `root:<scope>`) only for a true top-level orchestrator spawn."
+             Pass the exact worker name from `orca list` (e.g. `fin`, `mud`). \
+             Only OpenClaw L0 uses `--spawned-by openclaw`."
         ));
     }
     if let Some(self_name) = implicit_self.filter(|s| !s.is_empty()) {
         if workers.contains_key(self_name) {
             if spawned_by != self_name {
                 return Err(format!(
-                    "Error: ORCA_WORKER_NAME is '{self_name}' but parent lineage resolved to '{}' (expected '{self_name}'). \
-                     Sub-workers must record you as parent with `--spawned-by {self_name}`. \
-                     Root markers are only valid for top-level orchestrator spawns.",
+                    "Error: you are worker '{self_name}' but --spawned-by resolved to '{}'. \
+                     Sub-workers must use `--spawned-by {self_name}` (your worker name). \
+                     `--spawned-by openclaw` is ONLY for the OpenClaw L0 orchestrator.",
                     if spawned_by.is_empty() {
-                        ROOT_SPAWNED_BY
+                        "openclaw"
                     } else {
                         spawned_by
                     }
@@ -169,8 +169,7 @@ fn validate_spawn_context(
             return Err(format!(
                 "Error: ORCA_WORKER_NAME is '{self_name}' but that worker is not in Orca state. \
                  The daemon cannot link sub-workers without a tracked parent — \
-                 unset ORCA_WORKER_NAME, or pass --spawned-by <running-parent-name>. \
-                 Do not use `--spawned-by root` from a stale worker shell."
+                 unset ORCA_WORKER_NAME, or pass --spawned-by <running-parent-name>."
             ));
         }
     }
@@ -279,8 +278,9 @@ enum Commands {
         #[arg(long = "depth", default_value_t = 0)]
         depth: u32,
 
-        /// Required lineage marker. Use `root` / `root:<scope>` for top-level spawns,
-        /// or the parent worker name for sub-workers.
+        /// Parent worker name (e.g. `fin`, `mud`) — the name shown in `orca list`,
+        /// NOT the emoji label. Use `root` ONLY when the top-level orchestrator
+        /// (OpenClaw / Claude Code / Codex / Cursor) spawns directly.
         #[arg(long = "spawned-by", required = true)]
         spawned_by: String,
     },
@@ -558,7 +558,7 @@ fn cmd_spawn(
         process::exit(1);
     }
 
-    let worker_depth = depth + 1;
+    let worker_depth = depth;
 
     if worker_depth > config::max_depth() {
         eprintln!(
@@ -1356,12 +1356,17 @@ mod tests {
     }
 
     #[test]
-    fn test_root_spawn_markers_normalize_to_empty_parent() {
+    fn test_l0_spawn_markers_normalize_to_empty_parent() {
         let workers = std::collections::HashMap::new();
         let (sb, d) = resolve_spawn_lineage(normalize_spawned_by("root"), 0, &workers);
         assert_eq!(sb, "");
         assert_eq!(d, 0);
         assert_eq!(normalize_spawned_by("root:%149"), "");
+        assert_eq!(normalize_spawned_by("openclaw"), "");
+
+        let (sb2, d2) = resolve_spawn_lineage(normalize_spawned_by("openclaw"), 0, &workers);
+        assert_eq!(sb2, "");
+        assert_eq!(d2, 0);
     }
 
     #[test]

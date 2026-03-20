@@ -22,7 +22,7 @@
 
 Orca is a CLI tool **designed to be used by AI coding agents**, not humans directly. You talk to your agent, and it uses Orca behind the scenes to break work into pieces, farm them out to parallel workers, and create swarms of agents working simultaneously.
 
-The primary use case is with [**OpenClaw**](https://github.com/openclaw/openclaw) as the orchestrator — you delegate tasks from any OpenClaw channel (Slack, WhatsApp, Telegram, Matrix, Discord, etc.) and OpenClaw uses Orca to spawn workers, monitor progress, and report back results. You can also use it with Claude Code, Codex, or Cursor — launch your orchestrator agent in a tmux window on `main` and it can spawn and manage parallel workers from there.
+The primary use case is with [**OpenClaw**](https://github.com/openclaw/openclaw) as the L0 orchestrator — you delegate tasks from any OpenClaw channel (Slack, WhatsApp, Telegram, Matrix, Discord, etc.) and OpenClaw uses Orca to spawn workers, monitor progress, and report back results. You can also use it with Claude Code, Codex, or Cursor as workers — they **must** run inside a tmux session so Orca can auto-detect their pane for notification delivery.
 
 Each worker gets its own **git worktree** (isolated code sandbox) and **tmux window** (isolated terminal). A background **daemon** monitors all workers, auto-handles simple prompts, escalates blockers, and notifies the orchestrator when work is done. Workers can also be orchestrators themselves, spawning sub-workers up to 3 levels deep.
 
@@ -94,22 +94,7 @@ Add an "Orca" section to the appropriate file in your repo:
 | **Codex / Cursor / Generic** | `AGENTS.md` in your project root |
 | **OpenClaw** | `TOOLS.md` in your project root |
 
-Example snippet for Claude Code / Codex / Cursor (adapt the backend flag):
-
-```markdown
-## Orca (Parallel Agent Orchestration)
-
-This project has Orca installed for parallel task execution. When facing tasks
-that can be broken into independent pieces, use `orca spawn` to delegate work
-to parallel workers instead of doing everything sequentially.
-
-- `orca spawn "<task>" -b cc -d . --orchestrator cc --spawned-by root` to spawn workers
-- `orca list` to check status, `orca logs <name>` to review output
-- `orca kill <name>` to clean up finished workers
-- After spawning, stop and wait -- the daemon notifies you when workers finish
-```
-
-For **OpenClaw**, the `TOOLS.md` snippet is different — it must explicitly tell OpenClaw to use Orca instead of ACP for coding-agent requests. Without it, OpenClaw defaults to ACP-based agents:
+**For OpenClaw** (`TOOLS.md`) — OpenClaw is the L0 orchestrator. It must explicitly use Orca instead of ACP for coding-agent requests:
 
 ```markdown
 ## AI Coding Agents
@@ -119,9 +104,27 @@ Never run them directly via exec -- use orca workers so the user can attach to s
 
 - Do not use ACP for coding-agent requests
 - Default CLI: Claude Code (-b cc), Codex (-b cx), Cursor (-b cu)
-- Spawn pattern: `orca spawn "<task>" -b cc -d ~/path/to/repo --orchestrator openclaw --session-id <current-session-id> --spawned-by root`
+- Spawn pattern: `orca spawn "<task>" -b cc -d ~/path/to/repo --orchestrator openclaw --session-id <current-session-id> --spawned-by openclaw`
 - After spawning, wait silently -- orca daemon notifies when done. Don't poll with `orca list` loops.
 - Use `orca logs <name>`, `orca steer <name> "<msg>"`, `orca kill <name>` when done
+```
+
+**For Claude Code / Codex / Cursor** (`CLAUDE.md` or `AGENTS.md`) — these agents run as workers inside tmux. They identify themselves by their worker name (`ORCA_WORKER_NAME` env var):
+
+```markdown
+## Orca (Parallel Agent Orchestration)
+
+This project has Orca installed for parallel task execution. When facing tasks
+that can be broken into independent pieces, use `orca spawn` to delegate work
+to parallel workers instead of doing everything sequentially.
+
+You must be running inside a tmux session. Check ORCA_WORKER_NAME for your
+worker name and pass it as --spawned-by.
+
+- `orca spawn "<task>" -b cc -d . --orchestrator cc --spawned-by "$ORCA_WORKER_NAME"` to spawn workers
+- `orca list` to check status, `orca logs <name>` to review output
+- `orca kill <name>` to clean up finished workers
+- After spawning, stop and wait -- the daemon notifies you when workers finish
 ```
 
 **Bonus: manual takeover.** Because every worker runs in a real tmux window, you can attach to any worker's pane and take over manually at any time — inspect state, fix something by hand, or continue where the agent left off.

@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **Explicit spawn lineage is now mandatory:** `orca spawn` requires `--spawned-by` on every call. Use `--spawned-by root` (or `root:<scope>`) for top-level orchestrator spawns, and `--spawned-by <worker-name>` for sub-workers. Orca no longer relies on implicit parent inference for correctness.
+- **Clarified `--spawned-by` help text, errors, and SPEC:** help text, error messages, SKILL.md, and SPEC.md now emphasize that sub-workers must pass their plain worker name (e.g. `fin`, `mud`) — not the emoji label, not `root`. `root` is reserved for top-level orchestrators (L0) only. SPEC.md documents the full hierarchy: L0 = orchestrator (not an orca worker), L1 = direct workers (`--spawned-by root`), L2+ = sub-workers (`--spawned-by <worker-name>`).
 
 ### Fixed
 

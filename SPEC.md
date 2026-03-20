@@ -23,19 +23,38 @@
 - [Notifications](#notifications)
 - [Lifecycle Hooks](#lifecycle-hooks)
 - [Storage Layout](#storage-layout)
+- [Legend](#legend)
 - [Visual Language](#visual-language)
 
 ---
 
+## Legend
+
+**cc** = Claude Code · **cu** = Cursor · **cx** = Codex · **oc** = OpenClaw
+
 ## Overview
 
-Orca is a tool that lets an AI coding agent (Claude Code, Codex, Cursor, or OpenClaw) **spawn multiple other AI agents to work in parallel**, each on their own task, without stepping on each other's toes. Think of it like giving your AI a team of developers — it hands out assignments, watches over them, and gets notified when they're done.
+Orca is a tool that lets an AI coding agent (cc, cx, cu, or oc) **spawn multiple other AI agents to work in parallel**, each on their own task, without stepping on each other's toes. Think of it like giving your AI a team of developers — it hands out assignments, watches over them, and gets notified when they're done.
 
 **The human doesn't use Orca directly.** The human talks to their AI agent ("build me a payment system"), and the AI agent decides to use Orca to break the work into pieces and farm them out.
 
 ---
 
 ## Core Concepts
+
+
+### Orchestrators
+
+The **orchestrator** is the AI agent that's in charge — the one the human is talking to. It reads the Orca skill, learns how to use the CLI, and then:
+
+- Spawns workers for sub-tasks
+- Gets notified when they finish
+- Reviews their output
+- Decides what happens next
+
+The human tells the orchestrator what they want; the orchestrator figures out how to parallelize it.
+
+The orchestrator is either oc or cc/cx/cu.
 
 ### Workers
 
@@ -48,16 +67,7 @@ A **worker** is an AI agent that's been given a task. When the orchestrator spaw
 
 Each worker gets a short, random name (like `fox` or `ace`) for easy reference.
 
-### Orchestrators
-
-The **orchestrator** is the AI agent that's in charge — the one the human is talking to. It reads the Orca skill, learns how to use the CLI, and then:
-
-- Spawns workers for sub-tasks
-- Gets notified when they finish
-- Reviews their output
-- Decides what happens next
-
-The human tells the orchestrator what they want; the orchestrator figures out how to parallelize it.
+Workers are cc, cx, or cu (oc workers not supported).
 
 ### The Daemon
 
@@ -93,7 +103,7 @@ When the orchestrator runs `orca spawn "fix the login bug"`:
 | **State tracking** | Save worker info (name, task, status, etc.) to the state file |
 | **Daemon activation** | Start the background daemon if it isn't running yet |
 
-If anything fails, Orca cleans up after itself — removes the worktree, closes the window, and returns an error.
+If anything fails, Orca cleans up after itself — removes the worktree (stashing unchanged changes to main), closes the window, and returns an error.
 
 ### While a Worker Is Running
 
@@ -120,10 +130,12 @@ In all cases, the orchestrator receives a notification:
 ORCA: worker fox (claude) finished.
   orca logs fox    -- review output
   orca steer fox   -- send follow-up
-  orca kill fox    -- close and free resources
+  orca kill fox    -- close and free resources (double check the worker before doing so)
 ```
 
 The orchestrator then decides: review logs, send a follow-up, kill, or report back to the human.
+
+Note: if L0 launches a worker (L1) and that worker launches sub-workers (L2), the stop hook for L1 might fire while L1 waits for L2. L0 should **not** be notified since the child process is still running. Once all children finish, L0 is notified. The daemon handles this.
 
 ### Cleanup
 
@@ -165,9 +177,9 @@ In all of these scenarios, the **human** tells their AI agent what to do, and th
 The orchestrator breaks it into independent pieces:
 
 ```bash
-orca spawn "implement the user registration API" -b cc -d ~/proj --orchestrator cc
-orca spawn "build the registration form UI"      -b cc -d ~/proj --orchestrator cc
-orca spawn "write tests for the auth module"     -b cx -d ~/proj --orchestrator cc
+orca spawn "implement the user registration API" -b cc -d ~/proj --orchestrator openclaw --spawned-by openclaw
+orca spawn "build the registration form UI"      -b cc -d ~/proj --orchestrator openclaw --spawned-by openclaw
+orca spawn "write tests for the auth module"     -b cx -d ~/proj --orchestrator openclaw --spawned-by openclaw
 ```
 
 All three run simultaneously. As each finishes, the orchestrator reviews and reports back.
@@ -179,9 +191,9 @@ All three run simultaneously. As each finishes, the orchestrator reviews and rep
 The orchestrator tries multiple approaches in parallel:
 
 ```bash
-orca spawn "optimize using database indexes"       -b cc -d ~/proj --orchestrator cc
-orca spawn "optimize using a caching layer"        -b cc -d ~/proj --orchestrator cc
-orca spawn "optimize by denormalizing the schema"  -b cx -d ~/proj --orchestrator cc
+orca spawn "optimize using database indexes"       -b cc -d ~/proj --orchestrator openclaw --spawned-by openclaw
+orca spawn "optimize using a caching layer"        -b cc -d ~/proj --orchestrator openclaw --spawned-by openclaw
+orca spawn "optimize by denormalizing the schema"  -b cx -d ~/proj --orchestrator openclaw --spawned-by openclaw
 ```
 
 When all finish, it compares results and picks the best approach.
@@ -211,12 +223,27 @@ This sends a follow-up directly into the worker's terminal. It continues from wh
 A worker becomes an orchestrator for its own sub-tasks:
 
 ```
-Claude Code session (L0 orchestrator)
-  └── worker "ace" (L1) — "implement payment system"
-        ├── sub-worker "fig" (L2) — "build Stripe integration"
-        ├── sub-worker "kai" (L2) — "build payment form"
-        └── sub-worker "sol" (L2) — "write payment tests"
+oc  (🐋 L0 — the orchestrator)
+  └── worker "ace" (🐳 L1, cc) — "implement payment system"   --spawned-by openclaw
+        ├── sub-worker "fig" (🐬 L2, cc) — "build Stripe integration"  --spawned-by ace
+        ├── sub-worker "kai" (🐬 L2, cx) — "build payment form"        --spawned-by ace
+        └── sub-worker "sol" (🐬 L2, cx) — "write payment tests"       --spawned-by ace
 ```
+
+**Lineage rules (`--spawned-by`):**
+
+| Who is spawning | `--spawned-by` value | Stored depth |
+|---|---|---|
+| L0 orchestrator (oc or cc/cx/cu in tmux main window) | `openclaw`/(worker name) | L1 |
+| L1 worker (e.g. `ace`) spawning sub-workers | `ace` (its own worker name) | L2 |
+| L2 worker (e.g. `fig`) spawning sub-sub-workers | `fig` (its own worker name) | L3 |
+
+- L0 is the oc orchestrator — it is **not** an Orca worker, it runs outside Orca state.
+- cc/cx/cu agents always run as workers inside tmux panes. They identify themselves via `ORCA_WORKER_NAME`.
+- `--spawned-by` takes the plain worker name from `orca list` (e.g. `ace`, `fig`), not the emoji label.
+- `--spawned-by openclaw` is **only** for the oc L0 orchestrator. Workers must use their own name.
+- If `ORCA_WORKER_NAME` is set (inside a worker pane) and the agent passes the wrong `--spawned-by`, Orca rejects the spawn with a clear error.
+- Correct lineage is critical: without it, `has_running_children` returns false, done-deferral breaks, and notifications route to the wrong target.
 
 Depth is capped so it doesn't spiral out of control. When sub-workers finish, the L1 worker reviews, cleans up, and reports back up the chain.
 
@@ -279,18 +306,18 @@ Workers at max depth can still do their own work — they just can't spawn furth
 
 | Orchestrator | Mechanism |
 |---|---|
-| **Claude Code / Codex** | Message typed directly into the orchestrator's tmux pane |
-| **Cursor** | Message sent to tmux pane 3 times (Cursor's input is less reliable) |
-| **OpenClaw** | System event via `openclaw` CLI, with optional Slack routing |
+| **cc / cx** | Message typed directly into the orchestrator's tmux pane |
+| **cu** | Message sent to tmux pane 3 times (cu input is less reliable) |
+| **oc** | System event via `openclaw` CLI, with optional Slack routing |
 | **None** | No notifications — check manually with `orca list` |
 
 ---
 
 ## Lifecycle Hooks
 
-Orca can install lifecycle hooks into **Claude Code** and **Codex** — small scripts that automatically run when an agent stops, calling `orca report --event done`. This is the most reliable way for workers to signal completion.
+Orca can install lifecycle hooks into **cc** and **cx** — small scripts that run when an agent stops, calling `orca report --event done`. Most reliable way for workers to signal completion.
 
-**Cursor** doesn't support hooks, so Orca appends reporting instructions directly to the task prompt.
+**cu** doesn't support hooks, so Orca appends reporting instructions directly to the task prompt.
 
 ---
 
@@ -331,15 +358,16 @@ The state file uses **file locking** so multiple processes (CLI, daemon, multipl
 
 Orca uses sea creature emojis to show hierarchy depth at a glance:
 
-| Emoji | Level | Role |
-|---|---|---|
-| 🐋 | L0 | Top-level boss (whale) |
-| 🐳 | L1 | Direct worker (baby whale) |
-| 🐬 | L2 | Sub-worker (dolphin) |
-| 🐟 | L3 | Deep sub-worker (fish) |
-| 🦐 | L4+ | Deepest level (shrimp) |
+| Emoji | Level | Who | `--spawned-by` |
+|---|---|---|---|
+| 🐋 | L0 | Orchestrator (oc or cc/cx/cu) | — |
+| 🐳 | L1 | Direct worker spawned by L0 | `openclaw` or worker name |
+| 🐬 | L2 | Sub-worker spawned by L1 | parent worker name (e.g. `ace`) |
+| 🐟 | L3 | Sub-sub-worker spawned by L2 | parent worker name (e.g. `fig`) |
+| 🦐 | L4+ | Deepest level | parent worker name |
 
 ```
+|-🐋 | L0 openclaw/ rook..
 ├── [orc] ace  claude  ▶ running  🐳 L1  build feature X...    2m ago
 │   ├── [wrk] fig  claude  ▶ running  🐬 L2  implement auth...  1m ago
 │   └── [wrk] kai  codex   ✓ done     🐬 L2  add unit tests...  3m ago
