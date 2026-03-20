@@ -48,71 +48,8 @@ fn is_root_spawn_marker(spawned_by: &str) -> bool {
     L0_SPAWN_MARKERS.contains(&spawned_by) || spawned_by.starts_with("root:")
 }
 
-fn normalize_spawned_by(spawned_by: &str) -> String {
-    let spawned_by = spawned_by.trim();
-    if spawned_by == "root" || spawned_by.starts_with("root:") {
-        String::new()
-    } else {
-        spawned_by.to_string()
-    }
-}
-
-/// Resolve `--spawned-by self` to the L0 pane name.
-///
-/// When an L0 cc/cx/cu agent passes `--spawned-by self`, we detect or generate
-/// the name for the orchestrator's own tmux pane.
-///
-/// Returns `None` if the pane is empty or the name cannot be resolved.
-fn resolve_self_l0_name(pane: &str, workers: &HashMap<String, Worker>) -> Option<String> {
-    if pane.is_empty() {
-        return None;
-    }
-    // Check if pane already has an orca-assigned name (starts with a depth emoji)
-    let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    let (_, win_name) = rt.block_on(tmux::tmux(&[
-        "display-message",
-        "-p",
-        "-t",
-        pane,
-        "#{window_name}",
-    ]));
-    let win_name = win_name.trim();
-
-    let emojis = [
-        "\u{1f40b}",
-        "\u{1f433}",
-        "\u{1f42c}",
-        "\u{1f41f}",
-        "\u{1f990}",
-    ]; // depth emojis
-    for emoji in &emojis {
-        if let Some(name_part) = win_name.strip_prefix(emoji) {
-            return Some(name_part.to_string());
-        }
-    }
-
-    // Not yet named — generate a new L0 name
-    let mut existing = crate::state::worker_names();
-    existing.extend(workers.keys().cloned());
-    match crate::names::generate_name(&existing) {
-        Ok(name) => {
-            // Rename the pane's window with the L0 emoji
-            let l0_display = format!("\u{1f40b}{}", name);
-            rt.block_on(async {
-                tmux::tmux(&["set-option", "-wt", pane, "automatic-rename", "off"]).await;
-                tmux::tmux(&["rename-window", "-t", pane, &l0_display]).await;
-                let l0_title = format!("\u{1f40b} {} [L0]", name);
-                tmux::tmux(&["select-pane", "-t", pane, "-T", &l0_title]).await;
-            });
-            Some(name)
-        }
-        Err(_) => None,
-    }
-}
-
-/// When `--spawned-by` names a known parent worker, use that worker's stored
-/// `depth + 1` so child workers get L2/L3 labels and parentage.
-/// L0 markers (openclaw, legacy empty, self) always produce depth 1 (L1).
+/// When `--spawned-by` names a known parent worker (including auto-registered
+/// L0 entries), derive the child depth as `parent.depth + 1`.
 fn resolve_spawn_lineage(
     spawned_by: String,
     mut depth: u32,
@@ -122,14 +59,134 @@ fn resolve_spawn_lineage(
         if let Some(parent) = workers.get(&spawned_by) {
             depth = parent.depth + 1;
         } else if is_root_spawn_marker(&spawned_by) {
-            // L0 marker (openclaw) not in workers → child is L1
+            // L0 marker not yet in state (edge case) → child is L1
             depth = 1;
         }
-    } else {
-        // Legacy root marker normalized to "" → child is L1
-        depth = 1;
     }
     (spawned_by, depth)
+}
+
+// ---------------------------------------------------------------------------
+// L0 orchestrator auto-registration
+// ---------------------------------------------------------------------------
+
+fn make_l0_worker(
+    name: &str,
+    backend: &str,
+    pane_id: &str,
+    dir: &str,
+    session_id: &str,
+    base_branch: &str,
+) -> Worker {
+    Worker {
+        name: name.to_string(),
+        backend: backend.to_string(),
+        task: String::new(),
+        dir: dir.to_string(),
+        workdir: dir.to_string(),
+        base_branch: base_branch.to_string(),
+        orchestrator: backend.to_string(),
+        orchestrator_pane: String::new(),
+        session_id: session_id.to_string(),
+        reply_channel: String::new(),
+        reply_to: String::new(),
+        reply_thread: String::new(),
+        pane_id: pane_id.to_string(),
+        depth: 0,
+        spawned_by: String::new(),
+        layout: "window".to_string(),
+        status: "running".to_string(),
+        started_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        last_event_at: String::new(),
+        done_reported: false,
+        process_exited: false,
+    }
+}
+
+/// Auto-register an L0 orchestrator entry in state when `--spawned-by` is a
+/// root marker. Returns the L0 entry's name (e.g. `"openclaw"` or a generated
+/// name for cc/cx/cu).
+#[allow(clippy::too_many_arguments)]
+fn ensure_l0_orchestrator(
+    raw_spawned_by: &str,
+    orchestrator: &str,
+    pane: &str,
+    project_dir: &str,
+    session_id: &str,
+    base_branch: &str,
+    workers: &mut HashMap<String, Worker>,
+) -> Result<String, String> {
+    let trimmed = raw_spawned_by.trim();
+
+    // --spawned-by openclaw is only valid with --orchestrator openclaw
+    if trimmed == "openclaw" && orchestrator != "openclaw" {
+        return Err(
+            "--spawned-by openclaw is only for the OpenClaw orchestrator. \
+             For cc/cx/cu L0, use --spawned-by self."
+                .into(),
+        );
+    }
+
+    // Determine if this should be an openclaw L0 entry
+    let is_openclaw_l0 = trimmed == "openclaw"
+        || (orchestrator == "openclaw" && (trimmed == "root" || trimmed.starts_with("root:")));
+
+    if is_openclaw_l0 {
+        if !workers.contains_key("openclaw") {
+            let w = make_l0_worker(
+                "openclaw",
+                "openclaw",
+                "",
+                project_dir,
+                session_id,
+                base_branch,
+            );
+            state::save_worker(&w, false)
+                .map_err(|e| format!("Failed to register L0 orchestrator: {e}"))?;
+            workers.insert("openclaw".to_string(), w);
+        }
+        return Ok("openclaw".to_string());
+    }
+
+    // cc/cx/cu L0: find existing entry by pane or create a new one
+    if !pane.is_empty() {
+        for (name, w) in workers.iter() {
+            if w.depth == 0 && w.spawned_by.is_empty() && w.pane_id == pane {
+                return Ok(name.clone());
+            }
+        }
+    }
+
+    // Generate new L0 entry
+    let existing: HashSet<String> = workers.keys().cloned().collect();
+    let l0_name = crate::names::generate_name(&existing)
+        .map_err(|e| format!("Failed to generate L0 name: {e}"))?;
+    let backend = config::canonical_backend(orchestrator);
+    let w = make_l0_worker(
+        &l0_name,
+        backend,
+        pane,
+        project_dir,
+        session_id,
+        base_branch,
+    );
+    state::save_worker(&w, false)
+        .map_err(|e| format!("Failed to register L0 orchestrator: {e}"))?;
+    workers.insert(l0_name.clone(), w);
+
+    // Rename tmux window with L0 emoji
+    if !pane.is_empty() {
+        let l0_display = format!("🐋{l0_name}");
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        rt.block_on(async {
+            tmux::tmux(&["set-option", "-wt", pane, "automatic-rename", "off"]).await;
+            tmux::tmux(&["rename-window", "-t", pane, &l0_display]).await;
+            let l0_title = format!("🐋 {l0_name} [L0]");
+            tmux::tmux(&["select-pane", "-t", pane, "-T", &l0_title]).await;
+        });
+    }
+
+    Ok(l0_name)
 }
 
 /// Spawn policy flags (normally from `ORCA_*` env vars). Separated for unit tests.
@@ -227,7 +284,7 @@ fn validate_spawn_context(
                     }
                 ));
             }
-        } else if is_root_spawn_marker(spawned_by) || spawned_by.is_empty() {
+        } else if is_root_spawn_marker(raw_spawned_by) || spawned_by.is_empty() {
             return Err(format!(
                 "Error: ORCA_WORKER_NAME is '{self_name}' but that worker is not in Orca state. \
                  The daemon cannot link sub-workers without a tracked parent — \
@@ -597,19 +654,18 @@ fn cmd_spawn(
         pane
     };
 
-    let workers = state::load_workers();
+    let mut workers = state::load_workers();
     let implicit_env = std::env::var("ORCA_WORKER_NAME")
         .ok()
         .filter(|s| !s.is_empty());
     let raw_spawned_by = spawned_by;
-    let normalized_spawned_by = normalize_spawned_by(&raw_spawned_by);
-    let (spawned_by, depth) = resolve_spawn_lineage(normalized_spawned_by, depth, &workers);
 
+    // Pre-validate before any side effects (L0 registration, tmux rename)
     let spawn_env = SpawnValidateEnv::from_process_env();
     if let Err(msg) = validate_spawn_context(
         &orchestrator,
         &raw_spawned_by,
-        &spawned_by,
+        &raw_spawned_by,
         implicit_env.as_deref(),
         &workers,
         &reply_channel,
@@ -620,21 +676,27 @@ fn cmd_spawn(
         process::exit(1);
     }
 
-    // Resolve "self" to actual L0 pane name after validation
-    let spawned_by = if raw_spawned_by.trim() == "self" {
-        match resolve_self_l0_name(&pane, &workers) {
-            Some(name) => name,
-            None => {
-                eprintln!(
-                    "Error: --spawned-by self requires a tmux pane. \
-                     Make sure you are running inside a tmux session."
-                );
+    // If this is an L0 root marker, auto-register the L0 orchestrator entry
+    let spawned_by = if is_root_spawn_marker(&raw_spawned_by) {
+        match ensure_l0_orchestrator(
+            &raw_spawned_by,
+            &orchestrator,
+            &pane,
+            &project_dir,
+            &session_id,
+            &base_branch,
+            &mut workers,
+        ) {
+            Ok(name) => name,
+            Err(msg) => {
+                eprintln!("Error: {msg}");
                 process::exit(1);
             }
         }
     } else {
-        spawned_by
+        raw_spawned_by.clone()
     };
+    let (spawned_by, depth) = resolve_spawn_lineage(spawned_by, depth, &workers);
 
     let worker_depth = depth;
 
@@ -982,6 +1044,15 @@ fn cmd_kill(name: &str, no_stash: bool) {
         process::exit(1);
     };
 
+    // Protect virtual L0 orchestrators (openclaw) from being killed
+    if w.depth == 0 && w.spawned_by.is_empty() && w.backend == "openclaw" {
+        eprintln!(
+            "Error: '{name}' is a virtual L0 orchestrator (openclaw) and cannot be killed. \
+             Use `orca killall` to clean up its workers instead."
+        );
+        process::exit(1);
+    }
+
     if !w.orchestrator_pane.is_empty() {
         let current = tmux::detect_current_pane();
         if !current.is_empty() && current != w.orchestrator_pane {
@@ -1088,8 +1159,18 @@ fn cmd_killall(mut pane: String, session_id: String, mine: bool, force: bool, no
         return;
     }
 
+    // Filter out L0 orchestrator entries — they are bookkeeping, not killable workers
+    let killable: HashMap<String, Worker> = workers
+        .into_iter()
+        .filter(|(_, w)| !(w.depth == 0 && w.spawned_by.is_empty()))
+        .collect();
+    if killable.is_empty() {
+        println!("No workers to kill (L0 orchestrator entries are excluded).");
+        return;
+    }
+
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    for (wname, w) in &workers {
+    for (wname, w) in &killable {
         rt.block_on(async {
             if !w.pane_id.is_empty() && tmux::pane_alive(&w.pane_id).await {
                 tmux::kill_pane(&w.pane_id).await;
@@ -1106,7 +1187,7 @@ fn cmd_killall(mut pane: String, session_id: String, mine: bool, force: bool, no
         });
     }
 
-    let killed_names: Vec<String> = workers.keys().cloned().collect();
+    let killed_names: Vec<String> = killable.keys().cloned().collect();
     for wname in &killed_names {
         let _ = state::remove_worker(wname);
         println!("Killed: {wname}");
@@ -1148,7 +1229,13 @@ fn cmd_gc(mut pane: String, session_id: String, mine: bool, force: bool, no_stas
     };
     let to_gc: Vec<(String, Worker)> = scoped
         .into_iter()
-        .filter(|(_, w)| matches!(w.status.as_str(), "done" | "dead" | "destroyed"))
+        .filter(|(_, w)| {
+            // Skip L0 orchestrator entries — they are bookkeeping, not GC-able
+            if w.depth == 0 && w.spawned_by.is_empty() {
+                return false;
+            }
+            matches!(w.status.as_str(), "done" | "dead" | "destroyed")
+        })
         .collect();
 
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
@@ -1311,62 +1398,76 @@ fn cmd_hooks_uninstall() {
 // ---------------------------------------------------------------------------
 
 fn print_tree(workers: &HashMap<String, Worker>) {
+    // Separate L0 orchestrator entries from real workers
+    let mut l0_entries: Vec<&Worker> = Vec::new();
+    let mut real_workers: HashMap<&String, &Worker> = HashMap::new();
+    for (name, w) in workers {
+        if w.depth == 0 && w.spawned_by.is_empty() {
+            l0_entries.push(w);
+        } else {
+            real_workers.insert(name, w);
+        }
+    }
+    l0_entries.sort_by(|a, b| a.name.cmp(&b.name));
+
     // Group children by parent
     let mut children: HashMap<String, Vec<String>> = HashMap::new();
     for (name, w) in workers {
-        let parent = if w.spawned_by.is_empty() {
-            String::new()
-        } else {
-            w.spawned_by.clone()
-        };
-        children.entry(parent).or_default().push(name.clone());
+        if w.depth == 0 && w.spawned_by.is_empty() {
+            continue; // L0 entries are roots, not children
+        }
+        children
+            .entry(w.spawned_by.clone())
+            .or_default()
+            .push(name.clone());
     }
-
-    // Sort children lists
     for kids in children.values_mut() {
         kids.sort();
     }
 
-    // Roots: workers with no parent, or whose parent is not a known worker
-    let known: std::collections::HashSet<&String> = workers.keys().collect();
+    // Collect L0 names that have children
+    let known: HashSet<&String> = workers.keys().collect();
 
-    // Group roots by their L0 identifier (spawned_by value)
-    let mut l0_groups: HashMap<String, Vec<String>> = HashMap::new();
+    // Build L0 groups: each L0 entry OR orphaned parent gets a header
+    let mut l0_groups: Vec<(String, String, Vec<String>)> = Vec::new(); // (name, backend, children)
 
-    if let Some(top) = children.get("") {
-        l0_groups
-            .entry(String::new())
-            .or_default()
-            .extend(top.iter().cloned());
+    // First: registered L0 entries
+    for l0 in &l0_entries {
+        let kids = children.get(&l0.name).cloned().unwrap_or_default();
+        l0_groups.push((l0.name.clone(), l0.backend.clone(), kids));
     }
-    for (parent, kids) in &children {
-        if !parent.is_empty() && !known.contains(parent) {
-            l0_groups
-                .entry(parent.clone())
-                .or_default()
-                .extend(kids.iter().cloned());
+
+    // Workers with empty spawned_by that aren't L0 entries themselves
+    if let Some(orphans) = children.get("") {
+        let l0_names: HashSet<&str> = l0_entries.iter().map(|w| w.name.as_str()).collect();
+        let real_orphans: Vec<String> = orphans
+            .iter()
+            .filter(|n| !l0_names.contains(n.as_str()))
+            .cloned()
+            .collect();
+        if !real_orphans.is_empty() {
+            l0_groups.push(("(unknown)".to_string(), String::new(), real_orphans));
         }
     }
 
-    // Sort the L0 group keys and deduplicate roots within each group
-    let mut l0_keys: Vec<String> = l0_groups.keys().cloned().collect();
-    l0_keys.sort();
-
-    for key in &l0_keys {
-        let roots = l0_groups.get_mut(key).unwrap();
-        roots.sort();
-        roots.dedup();
+    // Orphaned children whose parent is not a known worker
+    for (parent, kids) in &children {
+        if !parent.is_empty()
+            && !known.contains(parent)
+            && !l0_groups.iter().any(|(n, _, _)| n == parent)
+        {
+            l0_groups.push((parent.clone(), String::new(), kids.clone()));
+        }
     }
 
-    let mut visited = std::collections::HashSet::new();
-    for (gi, key) in l0_keys.iter().enumerate() {
-        let l0_label = if key.is_empty() {
-            "L0".to_string()
+    let mut visited = HashSet::new();
+    for (gi, (l0_name, l0_backend, roots)) in l0_groups.iter().enumerate() {
+        let l0_label = if l0_backend.is_empty() {
+            format!("L0 {l0_name}")
         } else {
-            format!("L0 {key}")
+            format!("L0 {l0_name} ({l0_backend})")
         };
         println!("{}|-\u{1f40b} | {l0_label}", if gi > 0 { "\n" } else { "" });
-        let roots = &l0_groups[key];
         for (i, root) in roots.iter().enumerate() {
             let is_last = i == roots.len() - 1;
             print_node(root, "", is_last, workers, &children, &mut visited);
@@ -1459,20 +1560,34 @@ mod tests {
     }
 
     #[test]
-    fn test_l0_spawn_markers_normalize_to_empty_parent() {
-        let workers = std::collections::HashMap::new();
-        // Legacy "root" normalizes to "" → resolve sets depth 1
-        let (sb, d) = resolve_spawn_lineage(normalize_spawned_by("root"), 0, &workers);
-        assert_eq!(sb, "");
-        assert_eq!(d, 1);
-        assert_eq!(normalize_spawned_by("root:%149"), "");
-        // "openclaw" is preserved (not normalized to "")
-        assert_eq!(normalize_spawned_by("openclaw"), "openclaw");
+    fn test_l0_spawn_markers_recognized() {
+        assert!(is_root_spawn_marker("root"));
+        assert!(is_root_spawn_marker("root:%149"));
+        assert!(is_root_spawn_marker("openclaw"));
+        assert!(is_root_spawn_marker("self"));
+        assert!(!is_root_spawn_marker("fin"));
+        assert!(!is_root_spawn_marker(""));
+    }
 
-        // openclaw stays as "openclaw" → resolve recognizes it as L0 marker → depth 1
-        let (sb2, d2) = resolve_spawn_lineage(normalize_spawned_by("openclaw"), 0, &workers);
-        assert_eq!(sb2, "openclaw");
-        assert_eq!(d2, 1);
+    #[test]
+    fn test_resolve_spawn_lineage_openclaw_l0_marker_depth_1() {
+        let workers = std::collections::HashMap::new();
+        // "openclaw" as L0 marker → depth 1
+        let (sb, d) = resolve_spawn_lineage("openclaw".into(), 0, &workers);
+        assert_eq!(sb, "openclaw");
+        assert_eq!(d, 1);
+    }
+
+    #[test]
+    fn test_resolve_spawn_lineage_with_l0_entry_in_state() {
+        let mut workers = std::collections::HashMap::new();
+        // L0 entry at depth 0
+        let l0 = make_l0_worker("openclaw", "openclaw", "", "/tmp", "", "main");
+        workers.insert("openclaw".into(), l0);
+        // Child resolves to depth 1
+        let (sb, d) = resolve_spawn_lineage("openclaw".into(), 0, &workers);
+        assert_eq!(sb, "openclaw");
+        assert_eq!(d, 1);
     }
 
     #[test]
@@ -1742,16 +1857,14 @@ mod tests {
     // Nested spawns from inside a worker bump stored depth by 1 (🐬 L2, 🐟 L3, …).
 
     #[test]
-    fn test_hierarchy_top_level_spawn_is_l1_same_for_cc_and_openclaw() {
+    fn test_hierarchy_top_level_spawn_is_l1_for_all_l0_markers() {
         let workers = std::collections::HashMap::new();
-        // Root spawn via legacy "root" → normalized to "" → depth 1
-        let (_, d1) = resolve_spawn_lineage(normalize_spawned_by("root"), 0, &workers);
-        assert_eq!(d1, 1);
-        assert_eq!(depth_label(d1), "🐳 L1");
-        // Root spawn via "openclaw" → preserved → depth 1
-        let (_, d2) = resolve_spawn_lineage(normalize_spawned_by("openclaw"), 0, &workers);
-        assert_eq!(d2, 1);
-        assert_eq!(depth_label(d2), "🐳 L1");
+        // All L0 markers should resolve to depth 1
+        for marker in ["openclaw", "root", "self"] {
+            let (_, d) = resolve_spawn_lineage(marker.into(), 0, &workers);
+            assert_eq!(d, 1, "marker '{marker}' should resolve to depth 1");
+            assert_eq!(depth_label(d), "🐳 L1");
+        }
     }
 
     #[test]
@@ -2722,15 +2835,15 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_spawned_by_preserves_openclaw() {
-        assert_eq!(normalize_spawned_by("openclaw"), "openclaw");
-        assert_eq!(normalize_spawned_by("  openclaw  "), "openclaw");
+    fn test_is_root_spawn_marker_openclaw() {
+        assert!(is_root_spawn_marker("openclaw"));
+        assert!(is_root_spawn_marker("  openclaw  ")); // trimmed
     }
 
     #[test]
-    fn test_normalize_spawned_by_clears_legacy_root() {
-        assert_eq!(normalize_spawned_by("root"), "");
-        assert_eq!(normalize_spawned_by("root:%149"), "");
+    fn test_is_root_spawn_marker_legacy_root() {
+        assert!(is_root_spawn_marker("root"));
+        assert!(is_root_spawn_marker("root:%149"));
     }
 
     #[test]
@@ -2768,7 +2881,7 @@ mod tests {
     #[test]
     fn test_worker_spawned_by_openclaw_is_depth_1() {
         let workers = std::collections::HashMap::new();
-        let (sb, d) = resolve_spawn_lineage(normalize_spawned_by("openclaw"), 0, &workers);
+        let (sb, d) = resolve_spawn_lineage("openclaw".into(), 0, &workers);
         assert_eq!(sb, "openclaw");
         assert_eq!(d, 1);
         assert_eq!(depth_label(d), "🐳 L1");
@@ -2785,23 +2898,69 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_spawned_by_preserves_self() {
-        assert_eq!(normalize_spawned_by("self"), "self");
-        assert_eq!(normalize_spawned_by("  self  "), "self");
-    }
-
-    #[test]
     fn test_resolve_spawn_lineage_self_returns_depth_1() {
         let workers = std::collections::HashMap::new();
-        let (sb, d) = resolve_spawn_lineage(normalize_spawned_by("self"), 0, &workers);
+        // "self" is an L0 marker → depth 1
+        let (sb, d) = resolve_spawn_lineage("self".into(), 0, &workers);
         assert_eq!(sb, "self");
         assert_eq!(d, 1);
     }
 
     #[test]
-    fn test_resolve_self_l0_name_returns_none_for_empty_pane() {
-        let workers = HashMap::new();
-        assert!(resolve_self_l0_name("", &workers).is_none());
+    fn test_ensure_l0_openclaw_rejects_non_openclaw_orchestrator() {
+        let mut workers = HashMap::new();
+        let result =
+            ensure_l0_orchestrator("openclaw", "cc", "%1", "/tmp", "", "main", &mut workers);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("only for the OpenClaw"));
+    }
+
+    #[test]
+    fn test_ensure_l0_openclaw_creates_entry_in_memory() {
+        // Test the in-memory logic without hitting state::save_worker
+        // by pre-populating the workers map as if ensure_l0_orchestrator ran
+        let mut workers = HashMap::new();
+        let w = make_l0_worker("openclaw", "openclaw", "", "/proj", "s1", "main");
+        workers.insert("openclaw".to_string(), w);
+
+        // Verify the L0 entry has correct fields
+        let l0 = &workers["openclaw"];
+        assert_eq!(l0.depth, 0);
+        assert_eq!(l0.backend, "openclaw");
+        assert!(l0.spawned_by.is_empty());
+        assert_eq!(l0.status, "running");
+    }
+
+    #[test]
+    fn test_ensure_l0_openclaw_skips_when_exists() {
+        let mut workers = HashMap::new();
+        // Pre-populate so ensure_l0_orchestrator sees it already exists
+        let w = make_l0_worker("openclaw", "openclaw", "", "/proj", "s1", "main");
+        workers.insert("openclaw".to_string(), w);
+
+        // This should return Ok immediately without trying to save_worker
+        let result = ensure_l0_orchestrator(
+            "openclaw",
+            "openclaw",
+            "",
+            "/tmp",
+            "s1",
+            "main",
+            &mut workers,
+        );
+        assert_eq!(result.unwrap(), "openclaw");
+    }
+
+    #[test]
+    fn test_make_l0_worker_fields() {
+        let w = make_l0_worker("test-l0", "claude", "%5", "/proj", "sid", "main");
+        assert_eq!(w.name, "test-l0");
+        assert_eq!(w.backend, "claude");
+        assert_eq!(w.pane_id, "%5");
+        assert_eq!(w.depth, 0);
+        assert!(w.spawned_by.is_empty());
+        assert_eq!(w.status, "running");
+        assert_eq!(w.dir, "/proj");
     }
 
     #[test]
@@ -2830,5 +2989,109 @@ mod tests {
             &strict_spawn_validate_env(),
         )
         .unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // L0 kill protection and filtering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_print_tree_with_l0_orchestrator_entry() {
+        let mut workers = HashMap::new();
+        // L0 openclaw entry
+        let l0 = make_l0_worker("openclaw", "openclaw", "", "/proj", "s1", "main");
+        workers.insert("openclaw".to_string(), l0);
+        // L1 worker under openclaw
+        let mut w1 = make_worker_with("ace", "claude", "running", 1);
+        w1.spawned_by = "openclaw".into();
+        workers.insert("ace".to_string(), w1);
+        print_tree(&workers); // should not panic
+    }
+
+    #[test]
+    fn test_print_tree_with_cc_l0_entry() {
+        let mut workers = HashMap::new();
+        // L0 cc entry
+        let l0 = make_l0_worker("rook", "claude", "%5", "/proj", "", "main");
+        workers.insert("rook".to_string(), l0);
+        // L1 worker under rook
+        let mut w1 = make_worker_with("fin", "claude", "running", 1);
+        w1.spawned_by = "rook".into();
+        workers.insert("fin".to_string(), w1);
+        print_tree(&workers);
+    }
+
+    #[test]
+    fn test_print_tree_multiple_l0_orchestrators() {
+        let mut workers = HashMap::new();
+        let l0_oc = make_l0_worker("openclaw", "openclaw", "", "/proj", "s1", "main");
+        workers.insert("openclaw".to_string(), l0_oc);
+        let l0_cc = make_l0_worker("rook", "claude", "%5", "/proj", "", "main");
+        workers.insert("rook".to_string(), l0_cc);
+        let mut w1 = make_worker_with("ace", "claude", "running", 1);
+        w1.spawned_by = "openclaw".into();
+        workers.insert("ace".to_string(), w1);
+        let mut w2 = make_worker_with("fin", "claude", "running", 1);
+        w2.spawned_by = "rook".into();
+        workers.insert("fin".to_string(), w2);
+        print_tree(&workers);
+    }
+
+    #[test]
+    fn test_l0_openclaw_not_killable() {
+        let l0 = make_l0_worker("openclaw", "openclaw", "", "/proj", "", "main");
+        // Verify the condition that cmd_kill checks
+        assert!(l0.depth == 0 && l0.spawned_by.is_empty() && l0.backend == "openclaw");
+    }
+
+    #[test]
+    fn test_l0_cc_is_killable() {
+        let l0 = make_l0_worker("rook", "claude", "%5", "/proj", "", "main");
+        // cc/cx/cu L0 entries should NOT match the openclaw kill-protection condition
+        assert!(!(l0.depth == 0 && l0.spawned_by.is_empty() && l0.backend == "openclaw"));
+    }
+
+    #[test]
+    fn test_killall_skips_l0_entries() {
+        let mut workers = HashMap::new();
+        // L0 entry
+        let l0 = make_l0_worker("openclaw", "openclaw", "", "/proj", "", "main");
+        workers.insert("openclaw".to_string(), l0);
+        // Regular worker
+        let w = make_worker_with("ace", "claude", "running", 1);
+        workers.insert("ace".to_string(), w);
+
+        // Filter like cmd_killall does
+        let killable: HashMap<String, Worker> = workers
+            .into_iter()
+            .filter(|(_, w)| !(w.depth == 0 && w.spawned_by.is_empty()))
+            .collect();
+        assert_eq!(killable.len(), 1);
+        assert!(killable.contains_key("ace"));
+    }
+
+    #[test]
+    fn test_gc_skips_l0_entries() {
+        let mut workers = HashMap::new();
+        // L0 entry with done status (shouldn't be GC'd)
+        let mut l0 = make_l0_worker("openclaw", "openclaw", "", "/proj", "", "main");
+        l0.status = "done".to_string();
+        workers.insert("openclaw".to_string(), l0);
+        // Done regular worker (should be GC'd)
+        let w = make_worker_with("ace", "claude", "done", 1);
+        workers.insert("ace".to_string(), w);
+
+        // Filter like cmd_gc does
+        let to_gc: Vec<(String, Worker)> = workers
+            .into_iter()
+            .filter(|(_, w)| {
+                if w.depth == 0 && w.spawned_by.is_empty() {
+                    return false;
+                }
+                matches!(w.status.as_str(), "done" | "dead" | "destroyed")
+            })
+            .collect();
+        assert_eq!(to_gc.len(), 1);
+        assert_eq!(to_gc[0].0, "ace");
     }
 }

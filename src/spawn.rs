@@ -183,45 +183,7 @@ pub async fn spawn_worker(opts: SpawnOptions) -> Result<Worker, Box<dyn std::err
 
         tmux(&["set-option", "-wt", &pane_id, "automatic-rename", "off"]).await;
 
-        // Rename L0 orchestrator window with emoji
-        if !opts.orchestrator_pane.is_empty() && opts.depth == 1 {
-            let (_, cur_name) = tmux(&[
-                "display-message",
-                "-p",
-                "-t",
-                &opts.orchestrator_pane,
-                "#{window_name}",
-            ])
-            .await;
-            let cur_name = cur_name.trim();
-            let has_emoji = DEPTH_EMOJIS.iter().any(|(_, e)| cur_name.starts_with(e));
-            if !has_emoji {
-                let l0_emoji = depth_emoji(0);
-                let mut extended = existing_names.clone();
-                extended.insert(worker_name.clone());
-                let l0_name = generate_name(&extended)
-                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-                tmux(&[
-                    "set-option",
-                    "-wt",
-                    &opts.orchestrator_pane,
-                    "automatic-rename",
-                    "off",
-                ])
-                .await;
-                let l0_display = format!("{}{}", l0_emoji, l0_name);
-                tmux(&["rename-window", "-t", &opts.orchestrator_pane, &l0_display]).await;
-                let l0_title = format!("{} {} [L0]", l0_emoji, l0_name);
-                tmux(&[
-                    "select-pane",
-                    "-t",
-                    &opts.orchestrator_pane,
-                    "-T",
-                    &l0_title,
-                ])
-                .await;
-            }
-        }
+        // L0 window rename is now handled by ensure_l0_orchestrator in cli.rs
 
         Ok(())
     }
