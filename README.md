@@ -141,18 +141,19 @@ For the full design — lifecycle, notifications, isolation, stuck-worker handli
 
 ## Supported Agents
 
-| Backend | Flag | Binary |
-|---|---|---|
-| **Claude Code** | `-b cc` or `-b claude` | `claude` |
-| **Codex** | `-b cx` or `-b codex` | `codex` |
-| **Cursor** | `-b cu` or `-b cursor` | `agent` / `cursor agent` |
+### Backends (workers)
 
-| Orchestrator | Flag | Notification |
-|---|---|---|
-| **Claude Code** | `--orchestrator cc` | Message to tmux pane |
-| **Codex** | `--orchestrator cx` | Message to tmux pane |
-| **Cursor** | `--orchestrator cu` | Message to tmux pane (sent 3x) |
-| **None** | `--orchestrator none` | Check with `orca list` |
+- **Claude Code** — `-b cc` or `-b claude` (binary: `claude`)
+- **Codex** — `-b cx` or `-b codex` (binary: `codex`)
+- **Cursor** — `-b cu` or `-b cursor` (binary: `agent` / `cursor agent`)
+
+### Orchestrators
+
+- **Claude Code** — `--orchestrator cc` — message to tmux pane
+- **Codex** — `--orchestrator cx` — message to tmux pane
+- **Cursor** — `--orchestrator cu` — message to tmux pane (sent 3x)
+- **OpenClaw** — `--orchestrator openclaw` — notification via `openclaw system event`
+- **None** — `--orchestrator none` — no notification, check with `orca list`
 
 ---
 
