@@ -26,6 +26,8 @@ The primary use case is with [**OpenClaw**](https://github.com/openclaw/openclaw
 
 Each worker gets its own **git worktree** (isolated code sandbox) and **tmux window** (isolated terminal). A background **daemon** monitors all workers, auto-handles simple prompts, escalates blockers, and notifies the orchestrator when work is done. Workers can also be orchestrators themselves, spawning sub-workers up to 3 levels deep.
 
+> **Full setup guide:** [**SETUP.md**](skills/orca/references/SETUP.md) — install, configure, and wire up your agents.
+
 ---
 
 ## Quick Start
@@ -78,6 +80,50 @@ orca --help            # shows all commands
 orca daemon status     # daemon info
 orca list              # should say "No workers."
 ```
+
+### 5. Tell Your Agents About Orca
+
+**This is the most commonly missed step.** Installing the binary and skill is not enough — you need to mention Orca in your project's agent instruction file so agents know to delegate work to parallel workers.
+
+Add an "Orca" section to the appropriate file in your repo:
+
+| Agent | File to edit |
+|---|---|
+| **Claude Code** | `CLAUDE.md` in your project root |
+| **Codex / Cursor / Generic** | `AGENTS.md` in your project root |
+| **OpenClaw** | `TOOLS.md` in your project root |
+
+Example snippet for Claude Code / Codex / Cursor (adapt the backend flag):
+
+```markdown
+## Orca (Parallel Agent Orchestration)
+
+This project has Orca installed for parallel task execution. When facing tasks
+that can be broken into independent pieces, use `orca spawn` to delegate work
+to parallel workers instead of doing everything sequentially.
+
+- `orca spawn "<task>" -b cc -d . --orchestrator cc` to spawn workers
+- `orca list` to check status, `orca logs <name>` to review output
+- `orca kill <name>` to clean up finished workers
+- After spawning, stop and wait -- the daemon notifies you when workers finish
+```
+
+For **OpenClaw**, the `TOOLS.md` snippet is different — it must explicitly tell OpenClaw to use Orca instead of ACP for coding-agent requests. Without it, OpenClaw defaults to ACP-based agents:
+
+```markdown
+## AI Coding Agents
+
+ALWAYS use the `orca` skill (`orca spawn`) to spawn coding agents.
+Never run them directly via exec -- use orca workers so the user can attach to sessions.
+
+- Do not use ACP for coding-agent requests
+- Default CLI: Claude Code (-b cc), Codex (-b cx), Cursor (-b cu)
+- Spawn pattern: `orca spawn "<task>" -b cc -d ~/path/to/repo --orchestrator openclaw --session-id <current-session-id>`
+- After spawning, wait silently -- orca daemon notifies when done. Don't poll with `orca list` loops.
+- Use `orca logs <name>`, `orca steer <name> "<msg>"`, `orca kill <name>` when done
+```
+
+**Bonus: manual takeover.** Because every worker runs in a real tmux window, you can attach to any worker's pane and take over manually at any time — inspect state, fix something by hand, or continue where the agent left off.
 
 ---
 
