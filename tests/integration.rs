@@ -780,17 +780,11 @@ fn test_hooks_uninstall_runs() {
 #[test]
 fn test_spawn_max_depth_exceeded() {
     let tmp = tempfile::tempdir().unwrap();
+    // With ORCA_MAX_DEPTH=0, any spawn (which produces depth >= 1) exceeds the limit
     orca_with_home(&tmp)
-        .env("ORCA_MAX_DEPTH", "1")
+        .env("ORCA_MAX_DEPTH", "0")
         .env("ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR", "1")
-        .args([
-            "spawn",
-            "do something",
-            "--depth",
-            "1",
-            "--spawned-by",
-            "root",
-        ])
+        .args(["spawn", "do something", "--spawned-by", "root"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("max orchestration depth"));

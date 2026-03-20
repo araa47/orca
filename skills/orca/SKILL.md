@@ -19,9 +19,9 @@ Before using Orca, determine which agent you are and **jump to your section**:
 | You are… | Jump to | `--spawned-by` |
 |----------|---------|----------------|
 | OpenClaw | [OpenClaw instructions](#openclaw-l0-orchestrator) | `openclaw` |
-| Claude Code | [Claude Code instructions](#claude-code-cc--claude) | your worker name |
-| Codex | [Codex instructions](#codex-cx--codex) | your worker name |
-| Cursor | [Cursor instructions](#cursor-cu--cursor) | your worker name |
+| Claude Code | [Claude Code instructions](#claude-code-cc--claude) | `$ORCA_WORKER_NAME` (if set), or `self` (if L0) |
+| Codex | [Codex instructions](#codex-cx--codex) | `$ORCA_WORKER_NAME` (if set), or `self` (if L0) |
+| Cursor | [Cursor instructions](#cursor-cu--cursor) | `$ORCA_WORKER_NAME` (if set), or `self` (if L0) |
 
 ---
 
@@ -33,8 +33,9 @@ Every `orca spawn` must include `--spawned-by` so the daemon knows parent → ch
 - `--spawned-by openclaw` — OpenClaw is the only true L0 orchestrator. It lives outside tmux and receives notifications via `openclaw system event`.
 
 **cc / cx / cu (always in tmux):**
-- You are a worker running in a tmux pane. Check `ORCA_WORKER_NAME` in your environment — that is your worker name.
-- `--spawned-by $ORCA_WORKER_NAME` — use the plain name from `orca list` (e.g. `fin`, `mud`), **NOT** the emoji label, **NOT** `openclaw`.
+- Check `ORCA_WORKER_NAME` in your environment.
+  - If set: you are a worker — `--spawned-by "$ORCA_WORKER_NAME"` (the plain name from `orca list`, e.g. `fin`, `mud`), **NOT** the emoji label, **NOT** `openclaw`.
+  - If not set: you are the L0 orchestrator — `--spawned-by self`. Orca auto-detects or generates your L0 pane name.
 
 **Workers spawning sub-workers:**
 - Same rule: `--spawned-by <your-worker-name>` from `ORCA_WORKER_NAME` or `orca list`.
@@ -76,17 +77,24 @@ orca spawn "fix the login bug" -b cc -d ~/proj --orchestrator openclaw \
 
 **You must be running inside a tmux pane.** Orca auto-detects your tmux pane for notification delivery — this does not work outside tmux. If a human launched you as the orchestrator, they must have started your session inside a tmux window first.
 
-Check `ORCA_WORKER_NAME` in your environment to find your worker name.
+Check `ORCA_WORKER_NAME` in your environment:
+- If set: you are a worker — `--spawned-by "$ORCA_WORKER_NAME"`
+- If not set: you are the L0 orchestrator — `--spawned-by self`
 
 ```bash
+# As a worker (ORCA_WORKER_NAME is set):
 orca spawn "fix the login bug" -b cc -d ~/proj \
   --orchestrator cc --spawned-by "$ORCA_WORKER_NAME"
+
+# As L0 orchestrator (ORCA_WORKER_NAME is not set):
+orca spawn "fix the login bug" -b cc -d ~/proj \
+  --orchestrator cc --spawned-by self
 ```
 
 | Flag | Required? | Notes |
 |------|-----------|-------|
 | `--orchestrator cc` | **Yes** | Tells the daemon to send completions to your tmux pane |
-| `--spawned-by <name>` | **Yes** | Your worker name from `ORCA_WORKER_NAME` |
+| `--spawned-by <name>` | **Yes** | `$ORCA_WORKER_NAME` if set, or `self` if L0 |
 | `--pane` | No | Auto-detected from your current tmux pane — omit unless overriding |
 | `--depth` | No | Auto-resolved from your parent's depth |
 
@@ -96,17 +104,24 @@ orca spawn "fix the login bug" -b cc -d ~/proj \
 
 **You must be running inside a tmux pane.** If a human launched you as the orchestrator, they must have started your session inside a tmux window first.
 
-Check `ORCA_WORKER_NAME` in your environment to find your worker name.
+Check `ORCA_WORKER_NAME` in your environment:
+- If set: you are a worker — `--spawned-by "$ORCA_WORKER_NAME"`
+- If not set: you are the L0 orchestrator — `--spawned-by self`
 
 ```bash
+# As a worker (ORCA_WORKER_NAME is set):
 orca spawn "add unit tests" -b cx -d ~/proj \
   --orchestrator cx --spawned-by "$ORCA_WORKER_NAME"
+
+# As L0 orchestrator (ORCA_WORKER_NAME is not set):
+orca spawn "add unit tests" -b cx -d ~/proj \
+  --orchestrator cx --spawned-by self
 ```
 
 | Flag | Required? | Notes |
 |------|-----------|-------|
 | `--orchestrator cx` | **Yes** | |
-| `--spawned-by <name>` | **Yes** | Your worker name from `ORCA_WORKER_NAME` |
+| `--spawned-by <name>` | **Yes** | `$ORCA_WORKER_NAME` if set, or `self` if L0 |
 | `--pane` | No | Auto-detected |
 
 ---
@@ -115,17 +130,24 @@ orca spawn "add unit tests" -b cx -d ~/proj \
 
 **You must be running inside a tmux pane.** If a human launched you as the orchestrator, they must have started your session inside a tmux window first.
 
-Check `ORCA_WORKER_NAME` in your environment to find your worker name.
+Check `ORCA_WORKER_NAME` in your environment:
+- If set: you are a worker — `--spawned-by "$ORCA_WORKER_NAME"`
+- If not set: you are the L0 orchestrator — `--spawned-by self`
 
 ```bash
+# As a worker (ORCA_WORKER_NAME is set):
 orca spawn "refactor auth" -b cu -d ~/proj \
   --orchestrator cu --spawned-by "$ORCA_WORKER_NAME"
+
+# As L0 orchestrator (ORCA_WORKER_NAME is not set):
+orca spawn "refactor auth" -b cu -d ~/proj \
+  --orchestrator cu --spawned-by self
 ```
 
 | Flag | Required? | Notes |
 |------|-----------|-------|
 | `--orchestrator cu` | **Yes** | |
-| `--spawned-by <name>` | **Yes** | Your worker name from `ORCA_WORKER_NAME` |
+| `--spawned-by <name>` | **Yes** | `$ORCA_WORKER_NAME` if set, or `self` if L0 |
 | `--pane` | No | Auto-detected |
 
 ---

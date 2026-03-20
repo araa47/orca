@@ -35,7 +35,7 @@ fn depth_label(depth: u32) -> String {
     format!("{emoji} L{depth}")
 }
 
-const L0_SPAWN_MARKERS: &[&str] = &["root", "openclaw"];
+const L0_SPAWN_MARKERS: &[&str] = &["root", "openclaw", "self"];
 
 /// `--spawned-by` is mandatory so the caller must choose between:
 /// - a real parent worker name (`fin`, `audit-lead`, ...)
@@ -50,25 +50,84 @@ fn is_root_spawn_marker(spawned_by: &str) -> bool {
 
 fn normalize_spawned_by(spawned_by: &str) -> String {
     let spawned_by = spawned_by.trim();
-    if is_root_spawn_marker(spawned_by) {
+    if spawned_by == "root" || spawned_by.starts_with("root:") {
         String::new()
     } else {
         spawned_by.to_string()
     }
 }
 
+/// Resolve `--spawned-by self` to the L0 pane name.
+///
+/// When an L0 cc/cx/cu agent passes `--spawned-by self`, we detect or generate
+/// the name for the orchestrator's own tmux pane.
+///
+/// Returns `None` if the pane is empty or the name cannot be resolved.
+fn resolve_self_l0_name(pane: &str, workers: &HashMap<String, Worker>) -> Option<String> {
+    if pane.is_empty() {
+        return None;
+    }
+    // Check if pane already has an orca-assigned name (starts with a depth emoji)
+    let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+    let (_, win_name) = rt.block_on(tmux::tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{window_name}",
+    ]));
+    let win_name = win_name.trim();
+
+    let emojis = [
+        "\u{1f40b}",
+        "\u{1f433}",
+        "\u{1f42c}",
+        "\u{1f41f}",
+        "\u{1f990}",
+    ]; // depth emojis
+    for emoji in &emojis {
+        if let Some(name_part) = win_name.strip_prefix(emoji) {
+            return Some(name_part.to_string());
+        }
+    }
+
+    // Not yet named — generate a new L0 name
+    let mut existing = crate::state::worker_names();
+    existing.extend(workers.keys().cloned());
+    match crate::names::generate_name(&existing) {
+        Ok(name) => {
+            // Rename the pane's window with the L0 emoji
+            let l0_display = format!("\u{1f40b}{}", name);
+            rt.block_on(async {
+                tmux::tmux(&["set-option", "-wt", pane, "automatic-rename", "off"]).await;
+                tmux::tmux(&["rename-window", "-t", pane, &l0_display]).await;
+                let l0_title = format!("\u{1f40b} {} [L0]", name);
+                tmux::tmux(&["select-pane", "-t", pane, "-T", &l0_title]).await;
+            });
+            Some(name)
+        }
+        Err(_) => None,
+    }
+}
+
 /// When `--spawned-by` names a known parent worker, use that worker's stored
-/// `depth` as the CLI `--depth` so child workers get L2/L3 labels and parentage.
-/// L0 markers normalize to empty `spawned_by` and keep the CLI depth.
+/// `depth + 1` so child workers get L2/L3 labels and parentage.
+/// L0 markers (openclaw, legacy empty, self) always produce depth 1 (L1).
 fn resolve_spawn_lineage(
     spawned_by: String,
     mut depth: u32,
     workers: &std::collections::HashMap<String, Worker>,
 ) -> (String, u32) {
-    if !spawned_by.is_empty()
-        && let Some(parent) = workers.get(&spawned_by)
-    {
-        depth = parent.depth + 1;
+    if !spawned_by.is_empty() {
+        if let Some(parent) = workers.get(&spawned_by) {
+            depth = parent.depth + 1;
+        } else if is_root_spawn_marker(&spawned_by) {
+            // L0 marker (openclaw) not in workers → child is L1
+            depth = 1;
+        }
+    } else {
+        // Legacy root marker normalized to "" → child is L1
+        depth = 1;
     }
     (spawned_by, depth)
 }
@@ -144,7 +203,10 @@ fn validate_spawn_context(
              Only OpenClaw L0 uses `--spawned-by openclaw`."
             .into());
     }
-    if !spawned_by.is_empty() && !workers.contains_key(spawned_by) {
+    if !spawned_by.is_empty()
+        && !is_root_spawn_marker(spawned_by)
+        && !workers.contains_key(spawned_by)
+    {
         return Err(format!(
             "Error: --spawned-by '{spawned_by}' does not match any tracked worker. \
              Pass the exact worker name from `orca list` (e.g. `fin`, `mud`). \
@@ -158,14 +220,14 @@ fn validate_spawn_context(
                     "Error: you are worker '{self_name}' but --spawned-by resolved to '{}'. \
                      Sub-workers must use `--spawned-by {self_name}` (your worker name). \
                      `--spawned-by openclaw` is ONLY for the OpenClaw L0 orchestrator.",
-                    if spawned_by.is_empty() {
+                    if is_root_spawn_marker(spawned_by) {
                         "openclaw"
                     } else {
                         spawned_by
                     }
                 ));
             }
-        } else if spawned_by.is_empty() {
+        } else if is_root_spawn_marker(spawned_by) || spawned_by.is_empty() {
             return Err(format!(
                 "Error: ORCA_WORKER_NAME is '{self_name}' but that worker is not in Orca state. \
                  The daemon cannot link sub-workers without a tracked parent — \
@@ -557,6 +619,22 @@ fn cmd_spawn(
         eprintln!("{msg}");
         process::exit(1);
     }
+
+    // Resolve "self" to actual L0 pane name after validation
+    let spawned_by = if raw_spawned_by.trim() == "self" {
+        match resolve_self_l0_name(&pane, &workers) {
+            Some(name) => name,
+            None => {
+                eprintln!(
+                    "Error: --spawned-by self requires a tmux pane. \
+                     Make sure you are running inside a tmux session."
+                );
+                process::exit(1);
+            }
+        }
+    } else {
+        spawned_by
+    };
 
     let worker_depth = depth;
 
@@ -1251,23 +1329,48 @@ fn print_tree(workers: &HashMap<String, Worker>) {
 
     // Roots: workers with no parent, or whose parent is not a known worker
     let known: std::collections::HashSet<&String> = workers.keys().collect();
-    let mut roots: Vec<String> = Vec::new();
+
+    // Group roots by their L0 identifier (spawned_by value)
+    let mut l0_groups: HashMap<String, Vec<String>> = HashMap::new();
 
     if let Some(top) = children.get("") {
-        roots.extend(top.iter().cloned());
+        l0_groups
+            .entry(String::new())
+            .or_default()
+            .extend(top.iter().cloned());
     }
     for (parent, kids) in &children {
         if !parent.is_empty() && !known.contains(parent) {
-            roots.extend(kids.iter().cloned());
+            l0_groups
+                .entry(parent.clone())
+                .or_default()
+                .extend(kids.iter().cloned());
         }
     }
-    roots.sort();
-    roots.dedup();
+
+    // Sort the L0 group keys and deduplicate roots within each group
+    let mut l0_keys: Vec<String> = l0_groups.keys().cloned().collect();
+    l0_keys.sort();
+
+    for key in &l0_keys {
+        let roots = l0_groups.get_mut(key).unwrap();
+        roots.sort();
+        roots.dedup();
+    }
 
     let mut visited = std::collections::HashSet::new();
-    for (i, root) in roots.iter().enumerate() {
-        let is_last = i == roots.len() - 1;
-        print_node(root, "", is_last, workers, &children, &mut visited);
+    for (gi, key) in l0_keys.iter().enumerate() {
+        let l0_label = if key.is_empty() {
+            "L0".to_string()
+        } else {
+            format!("L0 {key}")
+        };
+        println!("{}|-\u{1f40b} | {l0_label}", if gi > 0 { "\n" } else { "" });
+        let roots = &l0_groups[key];
+        for (i, root) in roots.iter().enumerate() {
+            let is_last = i == roots.len() - 1;
+            print_node(root, "", is_last, workers, &children, &mut visited);
+        }
     }
 }
 
@@ -1358,15 +1461,18 @@ mod tests {
     #[test]
     fn test_l0_spawn_markers_normalize_to_empty_parent() {
         let workers = std::collections::HashMap::new();
+        // Legacy "root" normalizes to "" → resolve sets depth 1
         let (sb, d) = resolve_spawn_lineage(normalize_spawned_by("root"), 0, &workers);
         assert_eq!(sb, "");
-        assert_eq!(d, 0);
+        assert_eq!(d, 1);
         assert_eq!(normalize_spawned_by("root:%149"), "");
-        assert_eq!(normalize_spawned_by("openclaw"), "");
+        // "openclaw" is preserved (not normalized to "")
+        assert_eq!(normalize_spawned_by("openclaw"), "openclaw");
 
+        // openclaw stays as "openclaw" → resolve recognizes it as L0 marker → depth 1
         let (sb2, d2) = resolve_spawn_lineage(normalize_spawned_by("openclaw"), 0, &workers);
-        assert_eq!(sb2, "");
-        assert_eq!(d2, 0);
+        assert_eq!(sb2, "openclaw");
+        assert_eq!(d2, 1);
     }
 
     #[test]
@@ -1375,7 +1481,7 @@ mod tests {
         workers.insert("p".into(), make_worker_with("p", "codex", "running", 2));
         let (sb, d) = resolve_spawn_lineage("p".into(), 0, &workers);
         assert_eq!(sb, "p");
-        assert_eq!(d, 2);
+        assert_eq!(d, 3);
     }
 
     #[test]
@@ -1395,8 +1501,8 @@ mod tests {
 
         let (spawned_by, cli_depth) = resolve_spawn_lineage("mud".into(), 0, &workers);
         assert_eq!(spawned_by, "mud");
-        assert_eq!(cli_depth + 1, 2);
-        assert_eq!(depth_label(cli_depth + 1), "🐬 L2");
+        assert_eq!(cli_depth, 2);
+        assert_eq!(depth_label(cli_depth), "🐬 L2");
     }
 
     fn strict_spawn_validate_env() -> SpawnValidateEnv {
@@ -1637,9 +1743,15 @@ mod tests {
 
     #[test]
     fn test_hierarchy_top_level_spawn_is_l1_same_for_cc_and_openclaw() {
-        let cli_depth = 0u32;
-        let stored = cli_depth + 1;
-        assert_eq!(depth_label(stored), "🐳 L1");
+        let workers = std::collections::HashMap::new();
+        // Root spawn via legacy "root" → normalized to "" → depth 1
+        let (_, d1) = resolve_spawn_lineage(normalize_spawned_by("root"), 0, &workers);
+        assert_eq!(d1, 1);
+        assert_eq!(depth_label(d1), "🐳 L1");
+        // Root spawn via "openclaw" → preserved → depth 1
+        let (_, d2) = resolve_spawn_lineage(normalize_spawned_by("openclaw"), 0, &workers);
+        assert_eq!(d2, 1);
+        assert_eq!(depth_label(d2), "🐳 L1");
     }
 
     #[test]
@@ -1651,10 +1763,8 @@ mod tests {
         );
         let (spawned_by, cli_depth) = resolve_spawn_lineage("l1-worker".into(), 0, &workers);
         assert_eq!(spawned_by, "l1-worker");
-        assert_eq!(cli_depth, 1);
-        let stored = cli_depth + 1;
-        assert_eq!(stored, 2);
-        assert_eq!(depth_label(stored), "🐬 L2");
+        assert_eq!(cli_depth, 2);
+        assert_eq!(depth_label(cli_depth), "🐬 L2");
     }
 
     #[test]
@@ -1663,8 +1773,8 @@ mod tests {
         workers.insert("l2".into(), make_worker_with("l2", "codex", "running", 2));
         let (spawned_by, cli_depth) = resolve_spawn_lineage("l2".into(), 0, &workers);
         assert_eq!(spawned_by, "l2");
-        assert_eq!(cli_depth, 2);
-        assert_eq!(depth_label(cli_depth + 1), "🐟 L3");
+        assert_eq!(cli_depth, 3);
+        assert_eq!(depth_label(cli_depth), "🐟 L3");
     }
 
     #[test]
@@ -2597,5 +2707,128 @@ mod tests {
         let w = make_test_worker("test-name");
         let target = worker_target(&w);
         assert!(target.contains(":test-name"));
+    }
+
+    // -----------------------------------------------------------------------
+    // New tests for explicit spawn lineage (v0.0.7)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_resolve_spawn_lineage_openclaw_returns_depth_1() {
+        let workers = std::collections::HashMap::new();
+        let (sb, d) = resolve_spawn_lineage("openclaw".into(), 0, &workers);
+        assert_eq!(sb, "openclaw");
+        assert_eq!(d, 1);
+    }
+
+    #[test]
+    fn test_normalize_spawned_by_preserves_openclaw() {
+        assert_eq!(normalize_spawned_by("openclaw"), "openclaw");
+        assert_eq!(normalize_spawned_by("  openclaw  "), "openclaw");
+    }
+
+    #[test]
+    fn test_normalize_spawned_by_clears_legacy_root() {
+        assert_eq!(normalize_spawned_by("root"), "");
+        assert_eq!(normalize_spawned_by("root:%149"), "");
+    }
+
+    #[test]
+    fn test_validate_accepts_openclaw_as_spawned_by() {
+        let workers = HashMap::new();
+        let env = SpawnValidateEnv {
+            allow_no_orchestrator: true,
+            allow_openclaw_without_reply: true,
+        };
+        // "openclaw" as spawned_by should pass validation (it's an L0 marker)
+        validate_spawn_context("cc", "openclaw", "openclaw", None, &workers, "", "", &env).unwrap();
+    }
+
+    #[test]
+    fn test_print_tree_shows_l0_header() {
+        let mut workers = HashMap::new();
+        let mut w = make_worker_with("ace", "claude", "running", 1);
+        w.spawned_by = "openclaw".into();
+        workers.insert("ace".to_string(), w);
+        // Should print L0 header without panic
+        print_tree(&workers);
+    }
+
+    #[test]
+    fn test_print_tree_l0_header_legacy_empty_parent() {
+        let mut workers = HashMap::new();
+        workers.insert(
+            "sol".to_string(),
+            make_worker_with("sol", "claude", "running", 1),
+        );
+        // spawned_by is "" (legacy) — should show under generic L0 header
+        print_tree(&workers);
+    }
+
+    #[test]
+    fn test_worker_spawned_by_openclaw_is_depth_1() {
+        let workers = std::collections::HashMap::new();
+        let (sb, d) = resolve_spawn_lineage(normalize_spawned_by("openclaw"), 0, &workers);
+        assert_eq!(sb, "openclaw");
+        assert_eq!(d, 1);
+        assert_eq!(depth_label(d), "🐳 L1");
+    }
+
+    // -----------------------------------------------------------------------
+    // H) --spawned-by self (L0 cc/cx/cu)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_self_is_recognized_as_l0_spawn_marker() {
+        assert!(is_root_spawn_marker("self"));
+        assert!(L0_SPAWN_MARKERS.contains(&"self"));
+    }
+
+    #[test]
+    fn test_normalize_spawned_by_preserves_self() {
+        assert_eq!(normalize_spawned_by("self"), "self");
+        assert_eq!(normalize_spawned_by("  self  "), "self");
+    }
+
+    #[test]
+    fn test_resolve_spawn_lineage_self_returns_depth_1() {
+        let workers = std::collections::HashMap::new();
+        let (sb, d) = resolve_spawn_lineage(normalize_spawned_by("self"), 0, &workers);
+        assert_eq!(sb, "self");
+        assert_eq!(d, 1);
+    }
+
+    #[test]
+    fn test_resolve_self_l0_name_returns_none_for_empty_pane() {
+        let workers = HashMap::new();
+        assert!(resolve_self_l0_name("", &workers).is_none());
+    }
+
+    #[test]
+    fn test_validate_accepts_self_as_spawned_by() {
+        let workers = HashMap::new();
+        let env = SpawnValidateEnv {
+            allow_no_orchestrator: true,
+            allow_openclaw_without_reply: true,
+        };
+        // "self" as spawned_by should pass validation (it's an L0 marker)
+        validate_spawn_context("cc", "self", "self", None, &workers, "", "", &env).unwrap();
+    }
+
+    #[test]
+    fn test_validate_self_not_rejected_as_unknown_parent() {
+        let workers = HashMap::new();
+        // With strict env, "self" should still pass because it's an L0 marker
+        validate_spawn_context(
+            "cc",
+            "self",
+            "self",
+            None,
+            &workers,
+            "",
+            "",
+            &strict_spawn_validate_env(),
+        )
+        .unwrap();
     }
 }

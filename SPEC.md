@@ -7,10 +7,11 @@
 
 ## Table of Contents
 
+- [Legend](#legend)
 - [Overview](#overview)
 - [Core Concepts](#core-concepts)
-  - [Workers](#workers)
   - [Orchestrators](#orchestrators)
+  - [Workers](#workers)
   - [The Daemon](#the-daemon)
 - [Lifecycle](#lifecycle)
   - [Spawning a Worker](#spawning-a-worker)
@@ -23,7 +24,6 @@
 - [Notifications](#notifications)
 - [Lifecycle Hooks](#lifecycle-hooks)
 - [Storage Layout](#storage-layout)
-- [Legend](#legend)
 - [Visual Language](#visual-language)
 
 ---
