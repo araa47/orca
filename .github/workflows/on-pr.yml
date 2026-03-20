@@ -1,0 +1,42 @@
+---
+name: On PR
+
+on:
+    pull_request:
+        branches: [main]
+        types:
+            - opened
+            - reopened
+            - synchronize
+            - ready_for_review
+
+permissions:
+    contents: read
+    pull-requests: write
+
+jobs:
+    prek:
+        uses: ./.github/workflows/job-prek.yml
+    test:
+        uses: ./.github/workflows/job-test.yml
+    post-coverage:
+        needs: test
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            pull-requests: write
+        steps:
+            - uses: actions/checkout@v4
+            - name: Download coverage comment
+              uses: actions/download-artifact@v4
+              with:
+                  name: coverage-comment
+            - name: Post coverage report to PR
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  gh pr comment "${{ github.event.pull_request.number }}" \
+                      --body-file comment-body.md \
+                      --edit-last 2>/dev/null || \
+                  gh pr comment "${{ github.event.pull_request.number }}" \
+                      --body-file comment-body.md

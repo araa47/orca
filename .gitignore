@@ -1,0 +1,43 @@
+# Rust build artifacts
+target/
+*.so
+*.dylib
+
+# General
+.DS_Store
+*.log
+.env
+.direnv
+
+# IDEs
+.devcontainer
+.idea
+*.iml
+.vscode/
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Autoimprove runtime artifacts
+autoimprove/results.tsv
+
+# Orca runtime state (sprint reports, logs, events)
+.orca/
+
+# Orca worktrees (created by orca spawn)
+.worktrees/
+
+# Service account keys
+*.key

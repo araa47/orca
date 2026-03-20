@@ -1,0 +1,87 @@
+---
+name: test
+
+on:
+    workflow_call:
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  components: llvm-tools-preview
+
+            - name: Install cargo-llvm-cov
+              uses: taiki-e/install-action@cargo-llvm-cov
+
+            - name: Cache cargo registry & build
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+                  restore-keys: rust-${{ runner.os }}-
+
+            - name: Run tests with coverage
+              run: |
+                  cargo llvm-cov --no-report
+                  cargo llvm-cov report --color never 2>&1 | tee coverage-raw.txt
+                  grep -E '^\S.*\.rs|^-{10,}|^TOTAL' coverage-raw.txt > coverage-table.txt || true
+
+            - name: Prepare coverage comment (for PR)
+              if: github.event_name == 'pull_request'
+              run: |
+                  TOTAL_LINE=$(grep "^TOTAL" coverage-table.txt | head -1)
+                  REGION_COV=$(echo "$TOTAL_LINE" | awk '{print $4}')
+                  FN_COV=$(echo "$TOTAL_LINE" | awk '{print $7}')
+                  LINE_COV=$(echo "$TOTAL_LINE" | awk '{print $10}')
+                  TOTAL_LINES=$(echo "$TOTAL_LINE" | awk '{print $8}')
+                  MISSED_LINES=$(echo "$TOTAL_LINE" | awk '{print $9}')
+
+                  TEST_SUMMARY=$(grep -E '^test result:' coverage-raw.txt | tail -1 || echo "")
+
+                  {
+                      echo "## 🧪 Coverage Report"
+                      echo ""
+                      echo "| Metric | Coverage |"
+                      echo "|--------|----------|"
+                      echo "| **Lines** | **${LINE_COV:-?}** (${TOTAL_LINES:-0} lines, ${MISSED_LINES:-0} missed) |"
+                      echo "| **Functions** | **${FN_COV:-?}** |"
+                      echo "| **Regions** | **${REGION_COV:-?}** |"
+                      echo ""
+                      if [ -n "$TEST_SUMMARY" ]; then
+                          echo "> $TEST_SUMMARY"
+                          echo ""
+                      fi
+                      echo "<details>"
+                      echo "<summary>📄 Coverage by file</summary>"
+                      echo ""
+                      echo "| File | Lines | Functions | Regions |"
+                      echo "|------|-------|-----------|---------|"
+                      grep -E '^\S.*\.rs' coverage-table.txt | while IFS= read -r line; do
+                          FILE=$(echo "$line" | awk '{print $1}')
+                          R_COV=$(echo "$line" | awk '{print $4}')
+                          F_COV=$(echo "$line" | awk '{print $7}')
+                          L_COV=$(echo "$line" | awk '{print $10}')
+                          echo "| \`$FILE\` | $L_COV | $F_COV | $R_COV |"
+                      done
+                      echo ""
+                      echo "</details>"
+                      echo ""
+                      echo "> Coverage must not decrease. See [CONTRIBUTING.md](./CONTRIBUTING.md#test-coverage) for policy."
+                  } > comment-body.md
+
+            - name: Upload coverage comment
+              if: github.event_name == 'pull_request'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: coverage-comment
+                  path: comment-body.md

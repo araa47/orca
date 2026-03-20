@@ -1,0 +1,44 @@
+---
+name: prek
+
+on:
+    workflow_call:
+
+jobs:
+    prek:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  components: rustfmt, clippy
+
+            - name: Cache cargo registry & build
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+                  restore-keys: rust-${{ runner.os }}-
+
+            - name: Install prek (pre-built binary)
+              run: |
+                  curl --proto '=https' --tlsv1.2 -LsSf https://github.com/j178/prek/releases/download/v0.3.6/prek-installer.sh | sh
+                  echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+                  echo "PATH=$HOME/.local/bin:$PATH" >> "$GITHUB_ENV"
+
+            - name: Cache pre-commit/prek hook environments
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cache/pre-commit
+                  key: prek-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+                  restore-keys: prek-${{ runner.os }}-
+
+            - name: Run prek (fmt, clippy, yaml, codespell, etc.)
+              run: prek run --all-files
