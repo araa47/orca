@@ -12,41 +12,117 @@ One-time setup: see [references/SETUP.md](references/SETUP.md) if orca is not al
 
 You are the orchestrator. Use the `orca` CLI below. You never need tmux knowledge.
 
-## Required flags (agents)
+## Required flags by orchestrator type
 
-Orca rejects ambiguous spawns so the daemon always knows **who to notify** and **parent → child** links (needed for idle detection, hook `done` deferral, and cleanup).
+Orca **rejects** ambiguous spawns so the daemon always knows **who to notify** and **parent → child** links. Every `orca spawn` must declare an orchestrator.
 
-### You orchestrate from Claude Code, Codex, or Cursor (tmux)
+Valid `--orchestrator` values: **`cc`**, **`cx`**, **`cu`**, **`openclaw`** (or long forms `claude`, `codex`, `cursor`). Unknown values are rejected. `none` requires opt-in via env var.
 
-- Set **`--orchestrator`** to how *you* receive notifications: **`cc`**, **`cx`**, or **`cu`** (aligned with worker backend families).
-- First-level workers from your pane: **`--depth 0`** (default) is correct.
-- **`--pane`** is usually auto-detected; omit it unless you know you need it.
+---
 
-### You orchestrate from OpenClaw
+### Claude Code (`cc` / `claude`)
 
-- Set **`--orchestrator openclaw`**.
-- **Also required:** **`--reply-channel`** and **`--reply-to`** (and **`--reply-thread`** when replying in a Slack thread). Without these, `orca spawn` fails by default so users don’t miss completions. For automation only, the process may set `ORCA_ALLOW_OPENCLAW_WITHOUT_REPLY=1`.
-
-### You are a worker spawning sub-workers
-
-- Prefer running **`orca spawn` in the parent worker’s pane** so **`ORCA_WORKER_NAME`** is set; the daemon then infers **`--spawned-by`** and depth from state.
-- If you spawn from a wrapper or subprocess that **does not** inherit `ORCA_WORKER_NAME`, you **must** pass **`--spawned-by <parent-worker-name>`** explicitly (name from `orca list`). Otherwise the child is stored as a root L1 worker with no parent — the same class of bug as “orchestrated finished but delegates still running.”
-- Do not pass a different **`--spawned-by`** than the worker whose shell is running the command when `ORCA_WORKER_NAME` is set to a **tracked** worker; Orca will error.
-
-### Headless / scripts (not interactive agents)
-
-- To use **`--orchestrator none`**, set **`ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR=1`** on that process.
-
-## CLI
+You are running inside a Claude Code tmux pane.
 
 ```bash
 orca spawn "fix the login bug" -b cc -d ~/proj --orchestrator cc
-orca spawn "add unit tests" -b cx -d ~/proj --base-branch develop --orchestrator cc
-orca spawn "refactor auth" -b cu -d ~/proj --orchestrator cu
+```
 
-# OpenClaw with reply routing (notifications go to the right channel/thread)
+| Flag | Required? | Notes |
+|------|-----------|-------|
+| `--orchestrator cc` | **Yes** | Tells the daemon to send completions to your tmux pane |
+| `--pane` | No | Auto-detected from your current tmux pane — omit unless overriding |
+| `--depth` | No | Default `0` for first-level workers — correct for L0 orchestrators |
+
+### Codex (`cx` / `codex`)
+
+You are running inside a Codex tmux pane.
+
+```bash
+orca spawn "add unit tests" -b cx -d ~/proj --orchestrator cx
+```
+
+| Flag | Required? | Notes |
+|------|-----------|-------|
+| `--orchestrator cx` | **Yes** | |
+| `--pane` | No | Auto-detected |
+
+### Cursor (`cu` / `cursor`)
+
+You are running inside a Cursor Agent tmux pane.
+
+```bash
+orca spawn "refactor auth" -b cu -d ~/proj --orchestrator cu
+```
+
+| Flag | Required? | Notes |
+|------|-----------|-------|
+| `--orchestrator cu` | **Yes** | |
+| `--pane` | No | Auto-detected |
+
+---
+
+### OpenClaw (`openclaw`)
+
+You are an OpenClaw agent. Notifications go via `openclaw system event`, and the user only sees results if you route them explicitly.
+
+```bash
 orca spawn "fix the login bug" -b cc -d ~/proj --orchestrator openclaw \
   --reply-channel slack --reply-to C0AGZA4178Q --reply-thread 1234567890.123456
+```
+
+| Flag | Required? | Notes |
+|------|-----------|-------|
+| `--orchestrator openclaw` | **Yes** | |
+| `--reply-channel` | **Yes** | `slack`, `telegram`, `discord`, etc. |
+| `--reply-to` | **Yes** | Channel ID or user ID for delivery |
+| `--reply-thread` | No | Thread ID for threaded replies (Slack) |
+| `--session-id` | No | OpenClaw session ID for scoped killall/gc |
+| `--pane` | No | Not used — OpenClaw delivers via system events, not tmux panes |
+
+**Without `--reply-channel` and `--reply-to`, `orca spawn` will fail.** Set `ORCA_ALLOW_OPENCLAW_WITHOUT_REPLY=1` only for automation.
+
+**When you receive the completion event:**
+1. Run `orca logs <name>` to review the output
+2. Summarize the results (include PR links if any)
+3. Send the summary via `openclaw message send --channel <ch> --target <target> --message <summary>`
+4. Do NOT reply in-session — the user won't see that. Use `openclaw message send`.
+5. Kill the worker: `orca kill <name>`
+
+---
+
+### Sub-workers (worker spawning further workers)
+
+If you are a worker spawning sub-workers:
+
+- **Prefer running `orca spawn` from your own pane** so `ORCA_WORKER_NAME` is set. The daemon then infers `--spawned-by` and depth from state automatically.
+- If you spawn from a wrapper or subprocess that does **not** inherit `ORCA_WORKER_NAME`, you **must** pass `--spawned-by <your-worker-name>` explicitly. Otherwise the child is an orphan L1 worker with no parent — the daemon won't know to wait for it before marking you done.
+- Do not pass a different `--spawned-by` than your own name when `ORCA_WORKER_NAME` is set to a tracked worker; Orca will error.
+
+```bash
+# From inside a worker pane (ORCA_WORKER_NAME is set automatically):
+orca spawn "sub-task A" -b cx -d ~/proj --orchestrator cc
+
+# From a wrapper without ORCA_WORKER_NAME:
+orca spawn "sub-task A" -b cx -d ~/proj --orchestrator cc --spawned-by my-worker
+```
+
+Max depth is 3 (`ORCA_MAX_DEPTH`). Max 10 running workers per orchestrator (`ORCA_MAX_WORKERS`). At max depth, do the work yourself.
+
+---
+
+### Headless / scripts (not interactive agents)
+
+To use `--orchestrator none`, set `ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR=1`.
+
+---
+
+## CLI reference
+
+```bash
+orca spawn "fix the login bug" -b cc -d ~/proj --orchestrator cc
+orca spawn "add unit tests" -b cx -d ~/proj --base-branch develop --orchestrator cx
+orca spawn "refactor auth" -b cu -d ~/proj --orchestrator cu
 
 orca list                                   # List all workers
 orca status <name>                          # Detailed status (last output lines)
@@ -62,8 +138,6 @@ orca hooks install|uninstall                # Install/remove lifecycle hooks for
 orca report -w <name> -e done              # Report worker lifecycle event (used by hooks)
 ```
 
-The `--pane` flag is auto-detected from tmux. You almost never need to pass it explicitly.
-
 ## Backends
 
 | Flag | Agent |
@@ -72,56 +146,7 @@ The `--pane` flag is auto-detected from tmux. You almost never need to pass it e
 | `-b cx` | Codex |
 | `-b cu` | Cursor Agent |
 
-## Orchestrator Types
-
-| Type | How you get notified |
-|------|---------------------|
-| `cc` / `cx` / `cu` | Message sent to your tmux pane (auto-detected) |
-| `openclaw` | `openclaw system event` — pass `--reply-channel`/`--reply-to`/`--reply-thread` for routed delivery |
-| `none` | Check manually with `orca list` |
-
-## OpenClaw Orchestrator — Critical Rules
-
-When `--orchestrator openclaw` is used, the daemon fires `openclaw system event` on completion.
-This injects a heartbeat into the OpenClaw session — **but the user won't see it unless you DM them directly.**
-
-**Always pass `--reply-channel` and `--reply-to` when the user is waiting for results:**
-
-```bash
-# Slack DM to user
-orca spawn "task" -b cc -d ~/proj --orchestrator openclaw \
-  --reply-channel slack --reply-to U02VA0Z3VLY
-
-# Slack channel
-orca spawn "task" -b cc -d ~/proj --orchestrator openclaw \
-  --reply-channel slack --reply-to C0AGZA4178Q
-
-# With thread (reply in thread)
-orca spawn "task" -b cc -d ~/proj --orchestrator openclaw \
-  --reply-channel slack --reply-to C0AGZA4178Q --reply-thread 1234567890.123456
-```
-
-**When you receive the completion event:**
-1. Run `orca logs <name>` to review the output
-2. Summarize the results (include PR links if any)
-3. Send the summary via `message(action=send, channel=slack, target="user:U02VA0Z3VLY", message=...)`
-   — **do NOT just reply in-session**, the user won't see that
-4. Kill the worker: `orca kill <name>`
-
-**Why this matters:** The system event fires as a heartbeat turn, invisible to the user in chat.
-You must proactively DM/message them with the result. If you reply in-session only, they never see it.
-
-## Sub-Workers
-
-Workers can spawn sub-workers. Pass `--depth` and `--spawned-by`:
-
-```bash
-orca spawn "sub-task A" -b cx -d ~/proj --depth 1 --spawned-by my-worker --orchestrator cc
-```
-
-Max depth is 3 (`ORCA_MAX_DEPTH`). Max 10 running workers per orchestrator (`ORCA_MAX_WORKERS`). At max depth, do the work yourself.
-
-### Cleanup responsibility
+## Cleanup responsibility
 
 - **L1+ workers** (depth >= 1): Before reporting done, kill your sub-workers with `orca gc --mine`. You spawned them, you clean them up.
 - **L0 orchestrator** (top-level): Do NOT auto-clean workers. The human decides when to kill/gc — they may want to inspect logs or cherry-pick branches first.
@@ -133,8 +158,7 @@ Max depth is 3 (`ORCA_MAX_DEPTH`). Max 10 running workers per orchestrator (`ORC
 - Use `orca list` / `orca status` only when the user asks what's happening
 - Kill individual workers when done: `orca kill <name>` (L0 only — let the human decide)
 - If you're an L1+ worker, run `orca gc --mine` before reporting done to clean up your sub-workers
-- Use `--orchestrator` so you get notified automatically
-- Pass `--depth` and `--spawned-by` when you are a sub-worker spawning further sub-workers
+- Always pass `--orchestrator` with the correct value for your agent type
 - Use `orca killall --mine` and `orca gc --mine` to clean up -- this only touches YOUR workers
 
 ## DON'T

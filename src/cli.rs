@@ -98,6 +98,10 @@ fn env_flag(key: &str) -> bool {
     matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes")
 }
 
+const VALID_ORCHESTRATORS: &[&str] = &[
+    "cc", "cx", "cu", "claude", "codex", "cursor", "openclaw", "none",
+];
+
 /// Enforce agent-safe spawn defaults: real orchestrator, OpenClaw reply routing, valid parent links.
 fn validate_spawn_context(
     orchestrator: &str,
@@ -108,6 +112,13 @@ fn validate_spawn_context(
     reply_to: &str,
     env: &SpawnValidateEnv,
 ) -> Result<(), String> {
+    if !VALID_ORCHESTRATORS.contains(&orchestrator) {
+        return Err(format!(
+            "Error: unknown --orchestrator '{orchestrator}'. \
+             Valid values: cc, cx, cu, openclaw (or long forms: claude, codex, cursor). \
+             Use 'none' only with ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR=1."
+        ));
+    }
     if orchestrator == "none" && !env.allow_no_orchestrator {
         return Err(
             "Error: --orchestrator is required (cc, cx, cu, or openclaw). \
@@ -1355,6 +1366,52 @@ mod tests {
         SpawnValidateEnv {
             allow_no_orchestrator: false,
             allow_openclaw_without_reply: false,
+        }
+    }
+
+    #[test]
+    fn validate_rejects_unknown_orchestrator() {
+        let workers = HashMap::new();
+        let err = validate_spawn_context(
+            "ccc",
+            "",
+            None,
+            &workers,
+            "",
+            "",
+            &strict_spawn_validate_env(),
+        )
+        .unwrap_err();
+        assert!(err.contains("unknown --orchestrator"), "got: {err}");
+        assert!(err.contains("ccc"), "got: {err}");
+
+        for bad in &["typo", "CC", "Openclaw", "slack", ""] {
+            assert!(
+                validate_spawn_context(
+                    bad,
+                    "",
+                    None,
+                    &workers,
+                    "",
+                    "",
+                    &strict_spawn_validate_env()
+                )
+                .is_err(),
+                "should reject orchestrator '{bad}'"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_accepts_all_valid_orchestrators() {
+        let workers = HashMap::new();
+        let env_permissive = SpawnValidateEnv {
+            allow_no_orchestrator: true,
+            allow_openclaw_without_reply: true,
+        };
+        for orch in VALID_ORCHESTRATORS {
+            validate_spawn_context(orch, "", None, &workers, "", "", &env_permissive)
+                .unwrap_or_else(|e| panic!("should accept orchestrator '{orch}': {e}"));
         }
     }
 

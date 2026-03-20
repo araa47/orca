@@ -801,6 +801,72 @@ fn test_spawn_rejects_orchestrator_none_without_opt_in() {
 }
 
 #[test]
+fn test_spawn_rejects_unknown_orchestrator() {
+    let tmp = tempfile::tempdir().unwrap();
+    orca_with_home(&tmp)
+        .args(["spawn", "do something", "--orchestrator", "typo"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown --orchestrator"));
+}
+
+#[test]
+fn test_spawn_rejects_unknown_spawned_by() {
+    let tmp = tempfile::tempdir().unwrap();
+    orca_with_home(&tmp)
+        .env("ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR", "1")
+        .args([
+            "spawn",
+            "do something",
+            "--spawned-by",
+            "nonexistent-parent",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "does not match any tracked worker",
+        ));
+}
+
+#[test]
+fn test_spawn_accepts_valid_orchestrator_values() {
+    for orch in &["cc", "cx", "cu", "claude", "codex", "cursor"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = orca_with_home(&tmp)
+            .args(["spawn", "task", "--orchestrator", orch])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            !stderr.contains("unknown --orchestrator"),
+            "orchestrator '{orch}' should be accepted, got: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn test_spawn_openclaw_rejects_without_reply_routing() {
+    let tmp = tempfile::tempdir().unwrap();
+    orca_with_home(&tmp)
+        .args(["spawn", "do something", "--orchestrator", "openclaw"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--reply-channel and --reply-to"));
+}
+
+#[test]
+fn test_spawn_stale_orca_worker_name_without_spawned_by() {
+    let tmp = tempfile::tempdir().unwrap();
+    orca_with_home(&tmp)
+        .env("ORCA_WORKER_NAME", "stale-dead-worker")
+        .env("ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR", "1")
+        .args(["spawn", "do something"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not in Orca state"));
+}
+
+#[test]
 fn test_spawn_missing_task() {
     orca_cmd()
         .args(["spawn"])
