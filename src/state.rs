@@ -286,6 +286,14 @@ pub fn count_running_by_orchestrator(orchestrator_pane: &str, session_id: &str) 
         .count()
 }
 
+/// True if this worker has any child workers (`spawned_by` = parent) still in play:
+/// **`running`** or **`blocked`** (not yet done/dead/destroyed).
+pub fn has_running_children(parent_name: &str) -> bool {
+    load_workers()
+        .values()
+        .any(|w| w.spawned_by == parent_name && matches!(w.status.as_str(), "running" | "blocked"))
+}
+
 /// Remove workers with status `done`, `dead`, or `destroyed`. Returns removed names.
 pub fn gc_workers() -> std::io::Result<Vec<String>> {
     let _lock = StateLock::acquire()?;
@@ -557,6 +565,69 @@ mod tests {
         assert_eq!(count, all_running_98);
 
         remove_worker(&name).unwrap();
+    }
+
+    #[test]
+    fn has_running_children_detects_spawned_by() {
+        init_test_home();
+        let parent = uid("par_run_ch");
+        let child = uid("kid_run_ch");
+
+        let mut w_parent = make_worker(&parent);
+        w_parent.status = "running".to_string();
+        save_worker(&w_parent, true).unwrap();
+
+        let mut w_child = make_worker(&child);
+        w_child.spawned_by = parent.clone();
+        w_child.status = "running".to_string();
+        save_worker(&w_child, true).unwrap();
+
+        assert!(has_running_children(&parent));
+
+        remove_worker(&child).unwrap();
+        remove_worker(&parent).unwrap();
+    }
+
+    #[test]
+    fn has_running_children_false_when_only_done_kids() {
+        init_test_home();
+        let parent = uid("par_done_k");
+        let child = uid("kid_done_k");
+
+        let mut w_parent = make_worker(&parent);
+        w_parent.status = "running".to_string();
+        save_worker(&w_parent, true).unwrap();
+
+        let mut w_child = make_worker(&child);
+        w_child.spawned_by = parent.clone();
+        w_child.status = "done".to_string();
+        save_worker(&w_child, true).unwrap();
+
+        assert!(!has_running_children(&parent));
+
+        remove_worker(&child).unwrap();
+        remove_worker(&parent).unwrap();
+    }
+
+    #[test]
+    fn has_running_children_detects_blocked_child() {
+        init_test_home();
+        let parent = uid("par_blocked_ch");
+        let child = uid("kid_blocked_ch");
+
+        let mut w_parent = make_worker(&parent);
+        w_parent.status = "running".to_string();
+        save_worker(&w_parent, true).unwrap();
+
+        let mut w_child = make_worker(&child);
+        w_child.spawned_by = parent.clone();
+        w_child.status = "blocked".to_string();
+        save_worker(&w_child, true).unwrap();
+
+        assert!(has_running_children(&parent));
+
+        remove_worker(&child).unwrap();
+        remove_worker(&parent).unwrap();
     }
 
     #[test]

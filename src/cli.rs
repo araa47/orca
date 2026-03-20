@@ -50,6 +50,31 @@ fn depth_label(depth: u32) -> String {
     format!("{emoji} L{depth}")
 }
 
+/// When `--spawned-by` names a known parent, use that parent's `depth` as the CLI
+/// `--depth` so child workers get L2/L3 labels and `spawned_by` linkage (daemon idle
+/// detection). When `--spawned-by` is empty, `ORCA_WORKER_NAME` is used if it matches
+/// a tracked worker (spawn from inside a worker shell — typical for OpenClaw L1 → L2).
+fn resolve_spawn_lineage(
+    mut spawned_by: String,
+    mut depth: u32,
+    implicit_parent: Option<&str>,
+    workers: &std::collections::HashMap<String, Worker>,
+) -> (String, u32) {
+    if spawned_by.is_empty()
+        && let Some(name) = implicit_parent
+        && !name.is_empty()
+        && workers.contains_key(name)
+    {
+        spawned_by = name.to_string();
+    }
+    if !spawned_by.is_empty()
+        && let Some(parent) = workers.get(&spawned_by)
+    {
+        depth = parent.depth;
+    }
+    (spawned_by, depth)
+}
+
 // ---------------------------------------------------------------------------
 // Relative time
 // ---------------------------------------------------------------------------
@@ -146,11 +171,12 @@ enum Commands {
         #[arg(long = "reply-thread", default_value = "")]
         reply_thread: String,
 
-        /// Orchestration depth (0=top-level)
+        /// Orchestration depth (0=L0/OpenClaw spawning first workers). When `--spawned-by`
+        /// names a known parent, depth is taken from that parent automatically.
         #[arg(long = "depth", default_value_t = 0)]
         depth: u32,
 
-        /// Name of the orchestrator spawning this worker
+        /// Parent worker name. Inside a worker shell, inferred from ORCA_WORKER_NAME when omitted.
         #[arg(long = "spawned-by", default_value = "")]
         spawned_by: String,
     },
@@ -195,7 +221,7 @@ enum Commands {
         #[arg(short = 'm', long = "message", default_value = "")]
         message: String,
 
-        /// Event source
+        /// Event source (`hook` from lifecycle hooks; use `cli` to force `done` while sub-workers run)
         #[arg(short = 's', long = "source", default_value = "hook")]
         source: String,
     },
@@ -390,6 +416,13 @@ fn cmd_spawn(
     } else {
         pane
     };
+
+    let workers = state::load_workers();
+    let implicit = std::env::var("ORCA_WORKER_NAME")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let (spawned_by, depth) =
+        resolve_spawn_lineage(spawned_by, depth, implicit.as_deref(), &workers);
 
     let worker_depth = depth + 1;
 
@@ -607,6 +640,26 @@ fn nudge_daemon() {
     }
 }
 
+/// When a **hook** fires `done` while the worker still has **active** children (`running` or
+/// `blocked`), record `heartbeat` instead so `done_reported` stays false. The IDE still invokes
+/// the stop hook every turn; we only gate whether Orca treats that as completion.
+fn apply_hook_done_deferral(
+    event: &str,
+    message: &str,
+    source: &str,
+    has_active_children: bool,
+) -> (String, String) {
+    if event == "done" && source == "hook" && has_active_children {
+        let msg = if message.is_empty() {
+            "orca: hook done deferred — sub-workers still active".to_string()
+        } else {
+            format!("{message} [orca: hook done deferred — sub-workers still active]")
+        };
+        return ("heartbeat".to_string(), msg);
+    }
+    (event.to_string(), message.to_string())
+}
+
 fn report_field_updates(event: &str, timestamp: &str) -> HashMap<String, serde_json::Value> {
     let mut updates = HashMap::new();
     updates.insert(
@@ -646,7 +699,11 @@ fn cmd_report(worker_name: &str, event: &str, message: &str, source: &str) {
         process::exit(1);
     };
 
-    let record = match events::append_event(worker_name, event, message, source) {
+    let has_kids = state::has_running_children(worker_name);
+    let (eff_event, eff_message) = apply_hook_done_deferral(event, message, source, has_kids);
+    let deferred_hook_done = eff_event != event;
+
+    let record = match events::append_event(worker_name, &eff_event, &eff_message, source) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -655,7 +712,7 @@ fn cmd_report(worker_name: &str, event: &str, message: &str, source: &str) {
     };
 
     let ts = record["timestamp"].as_str().unwrap_or("");
-    let updates = report_field_updates(event, ts);
+    let updates = report_field_updates(&eff_event, ts);
     let _ = state::update_worker_fields(worker_name, &updates);
 
     if !daemon::is_daemon_running() {
@@ -665,14 +722,20 @@ fn cmd_report(worker_name: &str, event: &str, message: &str, source: &str) {
     }
 
     audit(&format!(
-        "REPORT worker={worker_name} event={event} source={source}{}",
-        if message.is_empty() {
+        "REPORT worker={worker_name} event={eff_event} source={source}{}",
+        if eff_message.is_empty() {
             String::new()
         } else {
-            format!(" message={message:?}")
+            format!(" message={eff_message:?}")
         }
     ));
-    println!("Reported: {worker_name} {event}");
+    if deferred_hook_done {
+        println!(
+            "Reported: {worker_name} {eff_event} (stop hook: done deferred while sub-workers run)"
+        );
+    } else {
+        println!("Reported: {worker_name} {eff_event}");
+    }
 }
 
 fn cmd_steer(name: &str, message: Vec<String>) {
@@ -1149,6 +1212,111 @@ mod tests {
         assert_eq!(depth_label(1), "🐳 L1");
         assert_eq!(depth_label(3), "🐟 L3");
         assert_eq!(depth_label(99), "🦐 L99");
+    }
+
+    #[test]
+    fn test_resolve_spawn_lineage_top_level() {
+        let workers = std::collections::HashMap::new();
+        let (sb, d) = resolve_spawn_lineage(String::new(), 0, None, &workers);
+        assert_eq!(sb, "");
+        assert_eq!(d, 0);
+    }
+
+    #[test]
+    fn test_resolve_spawn_lineage_implicit_parent() {
+        let mut workers = std::collections::HashMap::new();
+        workers.insert(
+            "orch".into(),
+            make_worker_with("orch", "claude", "running", 1),
+        );
+        let (sb, d) = resolve_spawn_lineage(String::new(), 0, Some("orch"), &workers);
+        assert_eq!(sb, "orch");
+        assert_eq!(d, 1);
+    }
+
+    #[test]
+    fn test_resolve_spawn_lineage_explicit_spawned_by_sets_depth() {
+        let mut workers = std::collections::HashMap::new();
+        workers.insert("p".into(), make_worker_with("p", "codex", "running", 2));
+        let (sb, d) = resolve_spawn_lineage("p".into(), 0, None, &workers);
+        assert_eq!(sb, "p");
+        assert_eq!(d, 2);
+    }
+
+    #[test]
+    fn test_resolve_spawn_lineage_unknown_parent_keeps_cli_depth() {
+        let workers = std::collections::HashMap::new();
+        let (sb, d) = resolve_spawn_lineage("ghost".into(), 1, None, &workers);
+        assert_eq!(sb, "ghost");
+        assert_eq!(d, 1);
+    }
+
+    // --- Orchestrator vs worker depth (whale chain) ---
+    // Conceptual L0 = the orchestrator (Claude Code / Codex / Cursor pane, or OpenClaw).
+    // It is not an Orca `Worker` row. First `orca spawn` uses CLI --depth 0 → stored depth 1 → 🐳 L1.
+    // Nested spawns from inside a worker bump stored depth by 1 (🐬 L2, 🐟 L3, …).
+
+    #[test]
+    fn test_hierarchy_top_level_spawn_is_l1_same_for_cc_and_openclaw() {
+        let cli_depth = 0u32;
+        let stored = cli_depth + 1;
+        assert_eq!(depth_label(stored), "🐳 L1");
+    }
+
+    #[test]
+    fn test_hierarchy_worker_inside_l1_implicit_parent_gets_l2() {
+        let mut workers = std::collections::HashMap::new();
+        workers.insert(
+            "l1-worker".into(),
+            make_worker_with("l1-worker", "claude", "running", 1),
+        );
+        let (spawned_by, cli_depth) =
+            resolve_spawn_lineage(String::new(), 0, Some("l1-worker"), &workers);
+        assert_eq!(spawned_by, "l1-worker");
+        assert_eq!(cli_depth, 1);
+        let stored = cli_depth + 1;
+        assert_eq!(stored, 2);
+        assert_eq!(depth_label(stored), "🐬 L2");
+    }
+
+    #[test]
+    fn test_hierarchy_explicit_spawned_by_depth_2_parent_yields_l3() {
+        let mut workers = std::collections::HashMap::new();
+        workers.insert("l2".into(), make_worker_with("l2", "codex", "running", 2));
+        let (spawned_by, cli_depth) = resolve_spawn_lineage("l2".into(), 0, None, &workers);
+        assert_eq!(spawned_by, "l2");
+        assert_eq!(cli_depth, 2);
+        assert_eq!(depth_label(cli_depth + 1), "🐟 L3");
+    }
+
+    #[test]
+    fn apply_hook_done_deferral_noop_without_children() {
+        let (e, m) = super::apply_hook_done_deferral("done", "claude stop", "hook", false);
+        assert_eq!(e, "done");
+        assert_eq!(m, "claude stop");
+    }
+
+    #[test]
+    fn apply_hook_done_deferral_skipped_for_non_hook_source() {
+        let (e, m) = super::apply_hook_done_deferral("done", "x", "cli", true);
+        assert_eq!(e, "done");
+        assert_eq!(m, "x");
+    }
+
+    #[test]
+    fn apply_hook_done_deferral_heartbeat_when_children_running() {
+        let (e, m) = super::apply_hook_done_deferral("done", "claude stop", "hook", true);
+        assert_eq!(e, "heartbeat");
+        assert!(m.contains("claude stop"));
+        assert!(m.contains("deferred"));
+    }
+
+    #[test]
+    fn apply_hook_done_deferral_empty_message_when_children() {
+        let (e, m) = super::apply_hook_done_deferral("done", "", "hook", true);
+        assert_eq!(e, "heartbeat");
+        assert!(m.contains("sub-workers"));
+        assert!(m.contains("active"));
     }
 
     #[test]

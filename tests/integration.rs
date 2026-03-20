@@ -423,6 +423,43 @@ fn test_report_done_event_updates_state() {
 }
 
 #[test]
+fn test_report_hook_done_deferred_when_subworkers_running() {
+    let tmp = tempfile::tempdir().unwrap();
+    seed_worker(&tmp, "par-hook-def", "running");
+    seed_worker_full(&tmp, "kid-hook-def", "running", "par-hook-def", 1);
+    fs::create_dir_all(tmp.path().join("events")).unwrap();
+
+    orca_with_home(&tmp)
+        .args([
+            "report",
+            "--worker",
+            "par-hook-def",
+            "--event",
+            "done",
+            "--source",
+            "hook",
+            "--message",
+            "claude stop",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "done deferred while sub-workers run",
+        ));
+
+    let events_path = tmp.path().join("events").join("par-hook-def.jsonl");
+    let events_text = fs::read_to_string(&events_path).unwrap();
+    assert!(
+        events_text.contains("\"heartbeat\""),
+        "expected heartbeat, got: {events_text}",
+    );
+    assert!(
+        !events_text.contains("\"done\""),
+        "hook done should not be recorded: {events_text}",
+    );
+}
+
+#[test]
 fn test_report_blocked_event_updates_status() {
     let tmp = tempfile::tempdir().unwrap();
     seed_worker(&tmp, "block-rpt", "running");

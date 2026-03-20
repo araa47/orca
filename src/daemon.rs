@@ -302,7 +302,7 @@ async fn check_workers_inner(ds: &mut DaemonState) {
 async fn check_stuck(
     name: &str,
     worker: &Worker,
-    all_workers: &HashMap<String, Worker>,
+    _all_workers: &HashMap<String, Worker>,
     ds: &mut DaemonState,
 ) {
     let ea = event_age_secs(worker);
@@ -342,9 +342,7 @@ async fn check_stuck(
             return;
         }
 
-        let has_running_children = all_workers
-            .values()
-            .any(|w| w.spawned_by == name && w.status == "running");
+        let has_running_children = state::has_running_children(name);
         if has_running_children {
             ds.had_children.insert(name.to_string(), true);
             ds.idle_seen.remove(name);

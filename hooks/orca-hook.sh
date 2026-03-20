@@ -5,6 +5,10 @@
 # Translates backend-specific hook signals into `orca report` calls.
 # The hook handler does NOT notify the orchestrator directly — it only
 # appends events and lets the daemon handle delivery.
+#
+# If this worker still has active sub-workers (running or blocked in Orca state),
+# `orca report --source hook --event done` is recorded as heartbeat instead — the hook
+# still runs each turn; Orca only treats completion after delegates finish.
 set -euo pipefail
 
 BACKEND="${1:-claude}"
