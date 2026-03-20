@@ -269,6 +269,7 @@ When multiple orchestrators use Orca on the same machine:
 |---|---|---|---|
 | Max depth | 3 levels | `ORCA_MAX_DEPTH` | Prevents infinite spawning chains |
 | Max workers | 10 per orchestrator | `ORCA_MAX_WORKERS` | Prevents resource exhaustion |
+| Agent startup wait | 45 seconds | `ORCA_SPAWN_WAIT_TIMEOUT` | How long to poll the tmux pane for agent readiness after launch (float seconds; tests may set `1`) |
 
 Workers at max depth can still do their own work — they just can't spawn further sub-workers.
 

@@ -5,7 +5,7 @@ You are an autonomous agent improving the Orca CLI — a Rust tool that orchestr
 ## Project Context
 
 - **Language**: Rust (edition 2024 per Cargo.toml; use latest stable toolchain, e.g. `rustup update stable`)
-- **Build**: `cargo build`, `cargo test`, `cargo fmt`, `cargo clippy -- -D warnings`
+- **Build**: `cargo build`, `cargo nextest run` (or `cargo test`), `cargo fmt`, `cargo clippy -- -D warnings`
 - **Source**: `src/` — modules: cli, config, spawn, state, events, daemon, tmux, wake, prompts, worktree, names
 - **Tests**: Unit tests inline in each module + integration tests in `tests/`
 - **CI gate**: fmt + clippy + test must all pass

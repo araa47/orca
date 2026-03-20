@@ -12,15 +12,19 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
+            - name: Setup mold linker
+              uses: rui314/setup-mold@v1
+
             - name: Install Rust toolchain
               uses: dtolnay/rust-toolchain@stable
               with:
                   components: llvm-tools-preview
 
-            - name: Install cargo-nextest and cargo-llvm-cov
-              uses: taiki-e/install-action@v2
-              with:
-                  tool: nextest,cargo-llvm-cov
+            - name: Install cargo-llvm-cov
+              uses: taiki-e/install-action@cargo-llvm-cov
+
+            - name: Install cargo-nextest
+              uses: taiki-e/install-action@cargo-nextest
 
             - name: Cache cargo registry & build
               uses: actions/cache@v4
@@ -29,12 +33,16 @@ jobs:
                       ~/.cargo/registry
                       ~/.cargo/git
                       target
-                  key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-                  restore-keys: rust-${{ runner.os }}-
+                  key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-llvm-cov-nextest
+                  restore-keys: |
+                      rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+                      rust-${{ runner.os }}-
 
             - name: Run tests with coverage (parallel via nextest)
+              env:
+                  RUSTFLAGS: -C link-arg=-fuse-ld=mold
               run: |
-                  cargo llvm-cov nextest --no-report --no-fail-fast
+                  cargo llvm-cov nextest --no-report
                   cargo llvm-cov report --color never 2>&1 | tee coverage-raw.txt
                   grep -E '^\S.*\.rs|^-{10,}|^TOTAL' coverage-raw.txt > coverage-table.txt || true
 
@@ -48,7 +56,7 @@ jobs:
                   TOTAL_LINES=$(echo "$TOTAL_LINE" | awk '{print $8}')
                   MISSED_LINES=$(echo "$TOTAL_LINE" | awk '{print $9}')
 
-                  TEST_SUMMARY=$(grep -E '^test result:' coverage-raw.txt | tail -1 || echo "")
+                  TEST_SUMMARY=$(grep -E '^test result:|tests run:' coverage-raw.txt | tail -1 || echo "")
 
                   {
                       echo "## 🧪 Coverage Report"

@@ -1,0 +1,4 @@
+[profile.default]
+# Fail fast; retries add CI latency.
+retries = 0
+failure-output = "immediate-final"

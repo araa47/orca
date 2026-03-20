@@ -197,7 +197,7 @@ def build_prompt(issues: str, iteration: int, history: str) -> str:
 
     ## Rules
     - Fix exactly ONE issue per iteration (smallest useful change)
-    - Run `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test` before finishing
+    - Run `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo nextest run` before finishing
     - All three must pass before you stop
     - Do NOT add unnecessary complexity, comments, or refactoring
     - Do NOT modify test expectations to make tests pass — fix the actual code
@@ -547,7 +547,7 @@ def build_prompt_orca(
         work_unit = f"Fix exactly ONE of the following. Do not refactor unrelated code.\n\n{issues}"
         role_prefix = role_prefix.replace("{{work_unit_json}}", work_unit)
         role_prefix = role_prefix.replace("{{coverage_minimum}}", "0")
-        role_prefix = role_prefix.replace("{{coverage_command}}", "cargo test")
+        role_prefix = role_prefix.replace("{{coverage_command}}", "cargo llvm-cov nextest --summary-only")
         role_prefix = role_prefix.replace("{{coverage_baseline}}", "N/A")
         role_prefix = role_prefix + "\n\n---\n\n"
 
@@ -557,7 +557,7 @@ def build_prompt_orca(
 
     ## Rules
     - Fix exactly ONE issue per iteration (smallest useful change)
-    - Run `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test` before finishing
+    - Run `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo nextest run` before finishing
     - All three must pass before you stop
     - Do NOT add unnecessary complexity, comments, or refactoring
     - Do NOT modify test expectations just to make tests pass — fix the actual code

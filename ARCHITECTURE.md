@@ -142,8 +142,7 @@ Orca installs hooks into Claude Code and Codex so that when an agent stops, it a
 
 GitHub Actions runs on every PR and push to main:
 
-- `cargo fmt --check` — formatting
-- `cargo clippy -D warnings` — linting
-- `cargo test` — all tests (529 as of this writing: 475 unit + 54 integration)
+- **prek** job: `cargo fmt --check`, `cargo clippy -D warnings`, YAML and spell checks (links with **mold** via `RUSTFLAGS`)
+- **test** job: `cargo llvm-cov nextest` — all tests under coverage in parallel (links with **mold**); coverage report posted on PRs
 
 Test coverage is **88% line coverage**. Pure logic modules (prompts, events, names, state, tmux, wake) maintain >95%. Modules that interact with tmux/daemon fork have lower coverage due to requiring a live tmux server.

@@ -231,10 +231,12 @@ Full command reference lives in [`skills/orca/SKILL.md`](skills/orca/SKILL.md) â
 ## Development
 
 ```bash
-cargo build              # debug build
-cargo test               # run tests
-cargo fmt                # format code
-cargo clippy             # lint
+cargo install cargo-nextest --locked   # one-time; same test runner as CI
+cargo build                            # debug build
+cargo nextest run                      # run tests in parallel (preferred)
+cargo test                             # run tests without nextest
+cargo fmt                              # format code
+cargo clippy                           # lint
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
