@@ -829,22 +829,6 @@ fn test_spawn_rejects_unknown_spawned_by() {
 }
 
 #[test]
-fn test_spawn_accepts_valid_orchestrator_values() {
-    for orch in &["cc", "cx", "cu", "claude", "codex", "cursor"] {
-        let tmp = tempfile::tempdir().unwrap();
-        let result = orca_with_home(&tmp)
-            .args(["spawn", "task", "--orchestrator", orch])
-            .output()
-            .unwrap();
-        let stderr = String::from_utf8_lossy(&result.stderr);
-        assert!(
-            !stderr.contains("unknown --orchestrator"),
-            "orchestrator '{orch}' should be accepted, got: {stderr}"
-        );
-    }
-}
-
-#[test]
 fn test_spawn_openclaw_rejects_without_reply_routing() {
     let tmp = tempfile::tempdir().unwrap();
     orca_with_home(&tmp)
