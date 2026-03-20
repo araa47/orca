@@ -26,6 +26,8 @@ The primary use case is with [**OpenClaw**](https://github.com/openclaw/openclaw
 
 Each worker gets its own **git worktree** (isolated code sandbox) and **tmux window** (isolated terminal). A background **daemon** monitors all workers, auto-handles simple prompts, escalates blockers, and notifies the orchestrator when work is done. Workers can also be orchestrators themselves, spawning sub-workers up to 3 levels deep.
 
+> **Full setup guide:** [**SETUP.md**](SETUP.md) — install, configure, and wire up your agents.
+
 ---
 
 ## Quick Start
@@ -78,6 +80,39 @@ orca --help            # shows all commands
 orca daemon status     # daemon info
 orca list              # should say "No workers."
 ```
+
+### 5. Tell Your Agents About Orca
+
+**This is the most commonly missed step.** Installing the binary and skill is not enough — you need to mention Orca in your project's agent instruction file so agents know to delegate work to parallel workers.
+
+Add an "Orca" section to the appropriate file in your repo:
+
+| Agent | File to edit |
+|---|---|
+| **Claude Code** | `CLAUDE.md` in your project root |
+| **Codex / Cursor / Generic** | `AGENTS.md` in your project root |
+| **OpenClaw** | `TOOLS.md` in your project root |
+
+Example snippet to add (adapt the backend flag for your agent):
+
+```markdown
+## Orca (Parallel Agent Orchestration)
+
+This project has Orca installed for parallel task execution. When facing tasks
+that can be broken into independent pieces, use `orca spawn` to delegate work
+to parallel workers instead of doing everything sequentially.
+
+- `orca spawn "<task>" -b cc -d . --orchestrator cc` to spawn workers
+- `orca list` to check status, `orca logs <name>` to review output
+- `orca kill <name>` to clean up finished workers
+- After spawning, stop and wait -- the daemon notifies you when workers finish
+```
+
+Without this, agents will default to sequential execution even when parallel work would be much faster. For OpenClaw specifically, without Orca instructions in `TOOLS.md`, it will default to using ACP-based agents instead of spawning local tmux workers.
+
+**Bonus: manual takeover.** Because every worker runs in a real tmux window, you can attach to any worker's pane and take over manually at any time — inspect state, fix something by hand, or continue where the agent left off.
+
+See [**SETUP.md**](SETUP.md) for complete examples for each agent type.
 
 ---
 
@@ -172,6 +207,7 @@ Full command reference lives in [`skills/orca/SKILL.md`](skills/orca/SKILL.md) �
 
 | Document | Description |
 |---|---|
+| [**SETUP.md**](SETUP.md) | Full setup guide — install, configure agents, and wire everything up |
 | [**SPEC.md**](SPEC.md) | Human-readable design spec — how Orca works, use cases, lifecycle |
 | [**ARCHITECTURE.md**](ARCHITECTURE.md) | Technical architecture — module graph, data flow, runtime state |
 | [**skills/orca/SKILL.md**](skills/orca/SKILL.md) | CLI reference — what agents read to learn Orca |
