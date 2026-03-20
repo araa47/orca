@@ -402,19 +402,9 @@ fn is_codex_idle(_output: &str, lower: &str) -> bool {
         return false;
     }
     // Only check last 5 lines for "thinking"
-    let tail: String = lower
-        .lines()
-        .collect::<Vec<_>>()
-        .iter()
-        .rev()
-        .take(5)
-        .copied()
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join("\n");
-    !tail.contains("thinking")
+    let lines: Vec<&str> = lower.lines().collect();
+    let start = lines.len().saturating_sub(5);
+    !lines[start..].join("\n").contains("thinking")
 }
 
 fn is_cursor_idle(lower: &str) -> bool {
@@ -771,6 +761,13 @@ mod tests {
     fn idle_codex_no_shortcuts_marker() {
         let output = "Some random output";
         assert!(!is_codex_idle(output, &output.to_lowercase()));
+    }
+
+    #[test]
+    fn idle_codex_thinking_outside_last_5_lines() {
+        // "thinking" appears early but not in the last 5 lines — should be idle
+        let output = "? for shortcuts\nthinking\nline1\nline2\nline3\nline4\nline5";
+        assert!(is_codex_idle(output, &output.to_lowercase()));
     }
 
     // -----------------------------------------------------------------------
