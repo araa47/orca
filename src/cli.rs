@@ -9,7 +9,7 @@ use regex::Regex;
 use crate::config;
 use crate::daemon;
 use crate::events;
-use crate::spawn::{self, SpawnOptions};
+use crate::spawn::{self, SpawnOptions, truncate_task};
 use crate::state::{self, Worker};
 use crate::tmux;
 use crate::worktree;
@@ -437,11 +437,7 @@ fn cmd_spawn(
     match result {
         Ok(worker) => {
             let level = depth_label(worker.depth);
-            let short = if prompt.len() > 80 {
-                format!("{}...", &prompt[..80])
-            } else {
-                prompt.clone()
-            };
+            let short = truncate_task(&prompt, 80);
             audit(&format!(
                 "SPAWN worker={} backend={} depth={} spawned_by={} task={:?}",
                 worker.name,
@@ -1087,11 +1083,7 @@ fn print_node(
     let w = &workers[name];
     let connector = if is_last { "└── " } else { "├── " };
 
-    let short = if w.task.len() > 40 {
-        format!("{}...", &w.task[..40])
-    } else {
-        w.task.clone()
-    };
+    let short = truncate_task(&w.task, 40);
     let age = relative_time(&w.started_at);
     let level = depth_label(w.depth);
     let has_kids = children.get(name).is_some_and(|k| !k.is_empty());

@@ -41,6 +41,15 @@ fn depth_emoji(depth: u32) -> &'static str {
     "🦐"
 }
 
+pub(crate) fn truncate_task(task: &str, max_chars: usize) -> String {
+    let char_count = task.chars().count();
+    if char_count <= max_chars {
+        return task.to_string();
+    }
+    let truncated: String = task.chars().take(max_chars).collect();
+    format!("{truncated}…")
+}
+
 fn sh_quote(s: &str) -> String {
     let safe = Regex::new(r"^[a-zA-Z0-9_./-]+$").unwrap();
     if safe.is_match(s) {
@@ -296,11 +305,7 @@ pub async fn spawn_worker(opts: SpawnOptions) -> Result<Worker, Box<dyn std::err
             &opts.orchestrator
         };
 
-        let short_task = if opts.task.len() > 60 {
-            format!("{}…", &opts.task[..60])
-        } else {
-            opts.task.clone()
-        };
+        let short_task = truncate_task(&opts.task, 60);
 
         let pane_title = format!(
             "{} {} [{}|{}]{}",
@@ -442,6 +447,61 @@ mod tests {
         assert_eq!(sh_quote("foo;bar"), "'foo;bar'");
         assert_eq!(sh_quote("$(cmd)"), "'$(cmd)'");
         assert_eq!(sh_quote(""), "''");
+    }
+
+    // -----------------------------------------------------------------------
+    // truncate_task
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_truncate_task_short_string() {
+        assert_eq!(truncate_task("hello", 60), "hello");
+    }
+
+    #[test]
+    fn test_truncate_task_exact_limit() {
+        let task = "A".repeat(60);
+        assert_eq!(truncate_task(&task, 60), task);
+    }
+
+    #[test]
+    fn test_truncate_task_long_ascii() {
+        let task = "A".repeat(100);
+        let result = truncate_task(&task, 60);
+        assert!(result.ends_with('…'));
+        assert_eq!(result.chars().count(), 61); // 60 chars + ellipsis
+    }
+
+    #[test]
+    fn test_truncate_task_multibyte_under_limit() {
+        // 20 emojis = 80 bytes but only 20 chars — under the 60-char limit
+        let task = "🐋".repeat(20);
+        assert_eq!(truncate_task(&task, 60), task);
+    }
+
+    #[test]
+    fn test_truncate_task_multibyte_over_limit() {
+        // 61 emojis = 244 bytes, 61 chars — over the 60-char limit
+        // Previously this would panic with byte-based slicing
+        let task = "🐋".repeat(61);
+        let result = truncate_task(&task, 60);
+        assert!(result.ends_with('…'));
+        assert_eq!(result.chars().count(), 61); // 60 emoji + ellipsis
+    }
+
+    #[test]
+    fn test_truncate_task_mixed_ascii_and_multibyte() {
+        // Mix of ASCII and multi-byte to verify char-based counting
+        let task = format!("{}{}", "A".repeat(50), "🐋".repeat(20));
+        let result = truncate_task(&task, 60);
+        assert!(result.ends_with('…'));
+        assert_eq!(result.chars().count(), 61);
+        assert!(result.starts_with("AAAA"));
+    }
+
+    #[test]
+    fn test_truncate_task_empty() {
+        assert_eq!(truncate_task("", 60), "");
     }
 
     #[test]
