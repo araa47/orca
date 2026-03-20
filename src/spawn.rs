@@ -399,7 +399,18 @@ pub async fn spawn_worker(opts: SpawnOptions) -> Result<Worker, Box<dyn std::err
     };
 
     // Phase 3: Wait for agent to start
-    let status = wait_for_running(&worker_name, backend_key, &opts.session, 45.0, &pane_id).await;
+    let wait_timeout: f64 = std::env::var("ORCA_SPAWN_WAIT_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(45.0);
+    let status = wait_for_running(
+        &worker_name,
+        backend_key,
+        &opts.session,
+        wait_timeout,
+        &pane_id,
+    )
+    .await;
 
     if status == "error" || status == "timeout" {
         let tail = capture_pane(&pane_id, 20).await;
@@ -431,6 +442,14 @@ pub async fn spawn_worker(opts: SpawnOptions) -> Result<Worker, Box<dyn std::err
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn setup_spawn_env(tmp_home: &tempfile::TempDir) {
+        unsafe {
+            std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap());
+            std::env::set_var("ORCA_SPAWN_WAIT_TIMEOUT", "1");
+        }
+        let _ = crate::config::ensure_home();
+    }
 
     #[test]
     fn test_sh_quote_safe_strings() {
@@ -723,8 +742,7 @@ mod tests {
     async fn spawn_worker_empty_task_claude() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -750,8 +768,7 @@ mod tests {
     async fn spawn_worker_empty_task_codex() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -776,8 +793,7 @@ mod tests {
     async fn spawn_worker_empty_task_cursor() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -805,8 +821,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_worker_relative_dir_reaches_tmux_step() {
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         // "." resolves to the current dir which has a git repo (this project)
         let opts = SpawnOptions {
@@ -836,8 +851,7 @@ mod tests {
     async fn spawn_worker_duplicate_name_in_state() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -894,8 +908,7 @@ mod tests {
     async fn spawn_worker_long_task_truncation() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -926,8 +939,7 @@ mod tests {
     async fn spawn_worker_backend_alias_cc() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -952,8 +964,7 @@ mod tests {
     async fn spawn_worker_backend_alias_cx() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -978,8 +989,7 @@ mod tests {
     async fn spawn_worker_backend_alias_cu() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -1008,8 +1018,7 @@ mod tests {
     async fn spawn_worker_valid_name_alphanumeric() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -1034,8 +1043,7 @@ mod tests {
     async fn spawn_worker_valid_name_with_hyphens_underscores() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -1118,8 +1126,7 @@ mod tests {
     async fn spawn_worker_codex_backend_with_task() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -1149,8 +1156,7 @@ mod tests {
     async fn spawn_worker_depth_zero() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
@@ -1171,8 +1177,7 @@ mod tests {
     async fn spawn_worker_with_spawned_by() {
         let tmp = tempfile::tempdir().unwrap();
         let tmp_home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
-        let _ = crate::config::ensure_home();
+        setup_spawn_env(&tmp_home);
 
         let dir = tmp.path().to_string_lossy().into_owned();
         ensure_git_repo(&dir).await.unwrap();
