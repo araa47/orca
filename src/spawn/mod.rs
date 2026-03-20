@@ -361,7 +361,7 @@ pub async fn spawn_worker(opts: SpawnOptions) -> Result<Worker, Box<dyn std::err
     let wait_timeout: f64 = std::env::var("ORCA_SPAWN_WAIT_TIMEOUT")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(45.0);
+        .unwrap_or(60.0);
     let status = wait_for_running(
         &worker_name,
         backend_key,
