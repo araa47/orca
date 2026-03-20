@@ -402,18 +402,9 @@ fn is_codex_idle(_output: &str, lower: &str) -> bool {
         return false;
     }
     // Only check last 5 lines for "thinking"
-    let tail: String = lower
-        .lines()
-        .collect::<Vec<_>>()
-        .iter()
-        .rev()
-        .take(5)
-        .copied()
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join("\n");
+    let lines: Vec<&str> = lower.lines().collect();
+    let start = lines.len().saturating_sub(5);
+    let tail = lines[start..].join("\n");
     !tail.contains("thinking")
 }
 
@@ -1213,5 +1204,20 @@ mod tests {
     #[test]
     fn target_missing_case_insensitive() {
         assert!(tmux_target_missing("CAN'T FIND TARGET: FOO"));
+    }
+
+    #[test]
+    fn idle_codex_thinking_only_in_early_lines() {
+        // "thinking" in early lines but NOT in the last 5 should still be idle
+        let mut lines = vec!["? for shortcuts", "thinking about it..."];
+        for i in 0..6 {
+            lines.push(if i % 2 == 0 {
+                "output line"
+            } else {
+                "more output"
+            });
+        }
+        let output = lines.join("\n");
+        assert!(is_agent_idle(&output, "codex"));
     }
 }
