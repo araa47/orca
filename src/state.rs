@@ -321,22 +321,30 @@ pub fn gc_workers() -> std::io::Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Once;
+    use std::sync::{Mutex, MutexGuard};
 
-    static INIT: Once = Once::new();
-    // Keep the tempdir alive for the entire test run
-    static mut TEMP_DIR: Option<tempfile::TempDir> = None;
+    static STATE_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-    fn init_test_home() {
-        INIT.call_once(|| {
-            let tmp = tempfile::tempdir().expect("create temp dir");
-            // SAFETY: called once before concurrent test access via Once
-            unsafe { std::env::set_var("ORCA_HOME", tmp.path().to_str().unwrap()) };
-            // SAFETY: only called once, before any concurrent access
-            unsafe {
-                TEMP_DIR = Some(tmp);
-            }
-        });
+    /// Per-test `ORCA_HOME` under a global lock so parallel tests never share one state file.
+    struct TestOrcaHome {
+        #[allow(dead_code)]
+        _lock: MutexGuard<'static, ()>,
+        #[allow(dead_code)]
+        _dir: tempfile::TempDir,
+    }
+
+    fn init_test_home() -> TestOrcaHome {
+        let lock = STATE_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // SAFETY: `set_var` is only sound when no other thread observes ORCA_HOME concurrently.
+        // This helper runs under `STATE_TEST_MUTEX` and is test-only; keep unit tests serial w.r.t. ORCA_HOME.
+        unsafe {
+            std::env::set_var("ORCA_HOME", dir.path().to_str().unwrap());
+        }
+        TestOrcaHome {
+            _lock: lock,
+            _dir: dir,
+        }
     }
 
     fn make_worker(name: &str) -> Worker {
@@ -435,7 +443,7 @@ mod tests {
 
     #[test]
     fn save_and_load_worker() {
-        init_test_home();
+        let _home = init_test_home();
         let name = uid("save_load");
         let w = make_worker(&name);
         save_worker(&w, true).unwrap();
@@ -453,13 +461,13 @@ mod tests {
 
     #[test]
     fn get_worker_nonexistent() {
-        init_test_home();
+        let _home = init_test_home();
         assert!(get_worker("nonexistent_worker_xyz_99999").is_none());
     }
 
     #[test]
     fn remove_worker_test() {
-        init_test_home();
+        let _home = init_test_home();
         let name = uid("remove");
         let w = make_worker(&name);
         save_worker(&w, true).unwrap();
@@ -471,7 +479,7 @@ mod tests {
 
     #[test]
     fn update_worker_status_test() {
-        init_test_home();
+        let _home = init_test_home();
         let name = uid("update_status");
         let w = make_worker(&name);
         save_worker(&w, true).unwrap();
@@ -491,14 +499,14 @@ mod tests {
 
     #[test]
     fn update_worker_status_nonexistent() {
-        init_test_home();
+        let _home = init_test_home();
         let result = update_worker_status("nonexistent_xyz_88888", "done").unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn worker_names_test() {
-        init_test_home();
+        let _home = init_test_home();
         let name1 = uid("names_a");
         let name2 = uid("names_b");
         save_worker(&make_worker(&name1), true).unwrap();
@@ -515,7 +523,7 @@ mod tests {
 
     #[test]
     fn load_workers_test() {
-        init_test_home();
+        let _home = init_test_home();
         let name = uid("load_all");
         save_worker(&make_worker(&name), true).unwrap();
 
@@ -527,7 +535,7 @@ mod tests {
 
     #[test]
     fn count_running_by_orchestrator_test() {
-        init_test_home();
+        let _home = init_test_home();
         let name = uid("count_orch");
         let mut w = make_worker(&name);
         w.orchestrator_pane = "%99".to_string();
@@ -549,7 +557,7 @@ mod tests {
 
     #[test]
     fn count_running_skips_non_running() {
-        init_test_home();
+        let _home = init_test_home();
         let name = uid("count_skip");
         let mut w = make_worker(&name);
         w.orchestrator_pane = "%98".to_string();
@@ -569,7 +577,7 @@ mod tests {
 
     #[test]
     fn has_running_children_detects_spawned_by() {
-        init_test_home();
+        let _home = init_test_home();
         let parent = uid("par_run_ch");
         let child = uid("kid_run_ch");
 
@@ -590,7 +598,7 @@ mod tests {
 
     #[test]
     fn has_running_children_false_when_only_done_kids() {
-        init_test_home();
+        let _home = init_test_home();
         let parent = uid("par_done_k");
         let child = uid("kid_done_k");
 
@@ -611,7 +619,7 @@ mod tests {
 
     #[test]
     fn has_running_children_detects_blocked_child() {
-        init_test_home();
+        let _home = init_test_home();
         let parent = uid("par_blocked_ch");
         let child = uid("kid_blocked_ch");
 
@@ -632,7 +640,7 @@ mod tests {
 
     #[test]
     fn gc_workers_removes_done_dead_destroyed() {
-        init_test_home();
+        let _home = init_test_home();
         let name_done = uid("gc_done");
         let name_dead = uid("gc_dead");
         let name_destroyed = uid("gc_destroyed");
@@ -671,7 +679,7 @@ mod tests {
 
     #[test]
     fn update_worker_fields_test() {
-        init_test_home();
+        let _home = init_test_home();
         let name = uid("update_fields");
         let w = make_worker(&name);
         save_worker(&w, true).unwrap();
@@ -698,7 +706,7 @@ mod tests {
 
     #[test]
     fn update_worker_fields_nonexistent() {
-        init_test_home();
+        let _home = init_test_home();
         let result = update_worker_fields("nonexistent_xyz_77777", &HashMap::new()).unwrap();
         assert!(result.is_none());
     }
@@ -725,7 +733,7 @@ mod tests {
 
     #[test]
     fn save_multiple_workers_and_load() {
-        init_test_home();
+        let _home = init_test_home();
         let names: Vec<String> = (0..3).map(|i| uid(&format!("multi_{i}"))).collect();
         for name in &names {
             save_worker(&make_worker(name), true).unwrap();
@@ -743,7 +751,7 @@ mod tests {
 
     #[test]
     fn save_worker_duplicate_denied() {
-        init_test_home();
+        let _home = init_test_home();
         let name = uid("dup_deny");
         let w = make_worker(&name);
         save_worker(&w, true).unwrap();
@@ -759,7 +767,7 @@ mod tests {
 
     #[test]
     fn save_worker_overwrite_allowed() {
-        init_test_home();
+        let _home = init_test_home();
         let name = uid("dup_allow");
         let w = make_worker(&name);
         save_worker(&w, true).unwrap();
@@ -776,7 +784,7 @@ mod tests {
 
     #[test]
     fn load_raw_corrupt_json_creates_backup() {
-        init_test_home();
+        let _home = init_test_home();
         let _ = config::ensure_home();
         let state_path = config::state_file();
 
@@ -820,7 +828,7 @@ mod tests {
 
     #[test]
     fn load_raw_non_object_json_returns_empty() {
-        init_test_home();
+        let _home = init_test_home();
         let _ = config::ensure_home();
         let state_path = config::state_file();
 

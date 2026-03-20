@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-03-20
+
+### Added
+
+- **Stricter `orca spawn` validation for agents:** `--orchestrator none` is rejected by default — pass `cc`, `cx`, `cu`, or `openclaw`, or set `ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR=1` for headless/scripts (e.g. autoimprove).
+- **`openclaw` reply routing required:** `--orchestrator openclaw` now requires `--reply-channel` and `--reply-to` unless `ORCA_ALLOW_OPENCLAW_WITHOUT_REPLY=1`.
+- **Parent lineage:** `--spawned-by` must name a tracked worker; if `ORCA_WORKER_NAME` names a tracked worker it must match the resolved parent (prevents “orphan” L1 children and wrong idle / hook behavior). Stale `ORCA_WORKER_NAME` with an explicit valid `--spawned-by` is still allowed.
+
+### Fixed
+
+- **Flaky `state` tests:** each test using `ORCA_HOME` now gets an isolated temp dir under a mutex so parallel `cargo test` no longer races on one shared state file.
+
+### Changed
+
+- Agent skill (`SKILL.md`): sections for tmux orchestrators vs OpenClaw vs sub-worker spawns and required flags.
+
 ## [0.0.3] - 2026-03-20
 
 ### Fixed
@@ -44,7 +60,8 @@ _(This release was tagged without a changelog entry; summarized here retroactive
 - Claude Code, Codex, and Cursor as worker backends.
 - Pre-commit/prek hooks (fmt, clippy, yaml, codespell); CI split into job-prek and job-test.
 
-[Unreleased]: https://github.com/araa47/orca/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/araa47/orca/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/araa47/orca/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/araa47/orca/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/araa47/orca/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/araa47/orca/releases/tag/v0.0.1

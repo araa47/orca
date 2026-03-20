@@ -782,6 +782,7 @@ fn test_spawn_max_depth_exceeded() {
     let tmp = tempfile::tempdir().unwrap();
     orca_with_home(&tmp)
         .env("ORCA_MAX_DEPTH", "1")
+        .env("ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR", "1")
         .args(["spawn", "do something", "--depth", "1"])
         .assert()
         .failure()
@@ -789,11 +790,14 @@ fn test_spawn_max_depth_exceeded() {
 }
 
 #[test]
-fn test_spawn_depth_zero_allowed() {
+fn test_spawn_rejects_orchestrator_none_without_opt_in() {
     let tmp = tempfile::tempdir().unwrap();
     orca_with_home(&tmp)
         .env("ORCA_MAX_DEPTH", "3")
-        .args(["spawn", "do something", "--depth", "0"]);
+        .args(["spawn", "do something", "--depth", "0"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--orchestrator is required"));
 }
 
 #[test]

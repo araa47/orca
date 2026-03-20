@@ -12,6 +12,31 @@ One-time setup: see [references/SETUP.md](references/SETUP.md) if orca is not al
 
 You are the orchestrator. Use the `orca` CLI below. You never need tmux knowledge.
 
+## Required flags (agents)
+
+Orca rejects ambiguous spawns so the daemon always knows **who to notify** and **parent → child** links (needed for idle detection, hook `done` deferral, and cleanup).
+
+### You orchestrate from Claude Code, Codex, or Cursor (tmux)
+
+- Set **`--orchestrator`** to how *you* receive notifications: **`cc`**, **`cx`**, or **`cu`** (aligned with worker backend families).
+- First-level workers from your pane: **`--depth 0`** (default) is correct.
+- **`--pane`** is usually auto-detected; omit it unless you know you need it.
+
+### You orchestrate from OpenClaw
+
+- Set **`--orchestrator openclaw`**.
+- **Also required:** **`--reply-channel`** and **`--reply-to`** (and **`--reply-thread`** when replying in a Slack thread). Without these, `orca spawn` fails by default so users don’t miss completions. For automation only, the process may set `ORCA_ALLOW_OPENCLAW_WITHOUT_REPLY=1`.
+
+### You are a worker spawning sub-workers
+
+- Prefer running **`orca spawn` in the parent worker’s pane** so **`ORCA_WORKER_NAME`** is set; the daemon then infers **`--spawned-by`** and depth from state.
+- If you spawn from a wrapper or subprocess that **does not** inherit `ORCA_WORKER_NAME`, you **must** pass **`--spawned-by <parent-worker-name>`** explicitly (name from `orca list`). Otherwise the child is stored as a root L1 worker with no parent — the same class of bug as “orchestrated finished but delegates still running.”
+- Do not pass a different **`--spawned-by`** than the worker whose shell is running the command when `ORCA_WORKER_NAME` is set to a **tracked** worker; Orca will error.
+
+### Headless / scripts (not interactive agents)
+
+- To use **`--orchestrator none`**, set **`ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR=1`** on that process.
+
 ## CLI
 
 ```bash

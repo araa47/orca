@@ -75,6 +75,90 @@ fn resolve_spawn_lineage(
     (spawned_by, depth)
 }
 
+/// Spawn policy flags (normally from `ORCA_*` env vars). Separated for unit tests.
+#[derive(Clone, Copy)]
+struct SpawnValidateEnv {
+    allow_no_orchestrator: bool,
+    allow_openclaw_without_reply: bool,
+}
+
+impl SpawnValidateEnv {
+    fn from_process_env() -> Self {
+        Self {
+            allow_no_orchestrator: env_flag("ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR"),
+            allow_openclaw_without_reply: env_flag("ORCA_ALLOW_OPENCLAW_WITHOUT_REPLY"),
+        }
+    }
+}
+
+fn env_flag(key: &str) -> bool {
+    let Ok(v) = std::env::var(key) else {
+        return false;
+    };
+    matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes")
+}
+
+/// Enforce agent-safe spawn defaults: real orchestrator, OpenClaw reply routing, valid parent links.
+fn validate_spawn_context(
+    orchestrator: &str,
+    spawned_by: &str,
+    implicit_self: Option<&str>,
+    workers: &std::collections::HashMap<String, Worker>,
+    reply_channel: &str,
+    reply_to: &str,
+    env: &SpawnValidateEnv,
+) -> Result<(), String> {
+    if orchestrator == "none" && !env.allow_no_orchestrator {
+        return Err(
+            "Error: --orchestrator is required (cc, cx, cu, or openclaw). \
+             Agents must pass the same value as their backend family so notifications and scope work. \
+             For headless scripts only, set ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR=1."
+                .into(),
+        );
+    }
+    if orchestrator == "openclaw"
+        && (reply_channel.is_empty() || reply_to.is_empty())
+        && !env.allow_openclaw_without_reply
+    {
+        return Err(
+            "Error: --orchestrator openclaw requires --reply-channel and --reply-to. \
+             Without them the user may not see completion events. \
+             Set ORCA_ALLOW_OPENCLAW_WITHOUT_REPLY=1 only for automation."
+                .into(),
+        );
+    }
+    if !spawned_by.is_empty() && !workers.contains_key(spawned_by) {
+        return Err(format!(
+            "Error: --spawned-by '{spawned_by}' does not match any tracked worker. \
+             Use the parent's name from `orca list`, spawn from that worker's shell (ORCA_WORKER_NAME), \
+             or fix your command."
+        ));
+    }
+    if let Some(self_name) = implicit_self.filter(|s| !s.is_empty()) {
+        if workers.contains_key(self_name) {
+            if spawned_by != self_name {
+                return Err(format!(
+                    "Error: ORCA_WORKER_NAME is '{self_name}' but parent lineage resolved to '{}' (expected '{self_name}'). \
+                     Sub-workers must record you as parent: run `orca spawn` from this worker's shell, \
+                     or unset ORCA_WORKER_NAME and pass --spawned-by with an explicit parent.",
+                    if spawned_by.is_empty() {
+                        "(empty)"
+                    } else {
+                        spawned_by
+                    }
+                ));
+            }
+        } else if spawned_by.is_empty() {
+            return Err(format!(
+                "Error: ORCA_WORKER_NAME is '{self_name}' but that worker is not in Orca state. \
+                 The daemon cannot link sub-workers without a tracked parent — \
+                 unset ORCA_WORKER_NAME, or pass --spawned-by <running-parent-name>."
+            ));
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Relative time
 // ---------------------------------------------------------------------------
@@ -147,7 +231,8 @@ enum Commands {
         #[arg(long = "base-branch", default_value = "main")]
         base_branch: String,
 
-        /// Orchestrator type (cc/cx/cu/openclaw/none)
+        /// Who receives completion / stuck notifications (cc/cx/cu/openclaw). Value `none` is only
+        /// accepted when ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR=1 (headless scripts).
         #[arg(long = "orchestrator", default_value = "none")]
         orchestrator: String,
 
@@ -176,7 +261,8 @@ enum Commands {
         #[arg(long = "depth", default_value_t = 0)]
         depth: u32,
 
-        /// Parent worker name. Inside a worker shell, inferred from ORCA_WORKER_NAME when omitted.
+        /// Parent worker for sub-workers. Inside a tracked worker shell, inferred from ORCA_WORKER_NAME.
+        /// If you spawn from automation without that env, pass this explicitly or the child will look like a root L1 worker.
         #[arg(long = "spawned-by", default_value = "")]
         spawned_by: String,
     },
@@ -423,6 +509,20 @@ fn cmd_spawn(
         .filter(|s| !s.is_empty());
     let (spawned_by, depth) =
         resolve_spawn_lineage(spawned_by, depth, implicit.as_deref(), &workers);
+
+    let spawn_env = SpawnValidateEnv::from_process_env();
+    if let Err(msg) = validate_spawn_context(
+        &orchestrator,
+        &spawned_by,
+        implicit.as_deref(),
+        &workers,
+        &reply_channel,
+        &reply_to,
+        &spawn_env,
+    ) {
+        eprintln!("{msg}");
+        process::exit(1);
+    }
 
     let worker_depth = depth + 1;
 
@@ -1249,6 +1349,164 @@ mod tests {
         let (sb, d) = resolve_spawn_lineage("ghost".into(), 1, None, &workers);
         assert_eq!(sb, "ghost");
         assert_eq!(d, 1);
+    }
+
+    fn strict_spawn_validate_env() -> SpawnValidateEnv {
+        SpawnValidateEnv {
+            allow_no_orchestrator: false,
+            allow_openclaw_without_reply: false,
+        }
+    }
+
+    #[test]
+    fn validate_rejects_orchestrator_none_by_default() {
+        let workers = HashMap::new();
+        assert!(
+            validate_spawn_context(
+                "none",
+                "",
+                None,
+                &workers,
+                "",
+                "",
+                &strict_spawn_validate_env()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validate_allows_orchestrator_none_when_opt_in() {
+        let workers = HashMap::new();
+        let env = SpawnValidateEnv {
+            allow_no_orchestrator: true,
+            allow_openclaw_without_reply: false,
+        };
+        validate_spawn_context("none", "", None, &workers, "", "", &env).unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_unknown_spawned_by_parent() {
+        let workers = HashMap::new();
+        assert!(
+            validate_spawn_context(
+                "cc",
+                "nope",
+                None,
+                &workers,
+                "",
+                "",
+                &strict_spawn_validate_env()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validate_openclaw_requires_reply_routing() {
+        let workers = HashMap::new();
+        assert!(
+            validate_spawn_context(
+                "openclaw",
+                "",
+                None,
+                &workers,
+                "",
+                "",
+                &strict_spawn_validate_env()
+            )
+            .is_err()
+        );
+        validate_spawn_context(
+            "openclaw",
+            "",
+            None,
+            &workers,
+            "slack",
+            "C0ABC123",
+            &strict_spawn_validate_env(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn validate_orca_worker_name_must_match_tracked_self_or_explicit_parent() {
+        let mut workers = HashMap::new();
+        workers.insert(
+            "elm".into(),
+            make_worker_with("elm", "claude", "running", 1),
+        );
+        assert!(
+            validate_spawn_context(
+                "cc",
+                "",
+                Some("elm"),
+                &workers,
+                "",
+                "",
+                &strict_spawn_validate_env()
+            )
+            .is_err()
+        );
+
+        let (sb, _) = resolve_spawn_lineage(String::new(), 0, Some("elm"), &workers);
+        assert_eq!(sb, "elm");
+        validate_spawn_context(
+            "cc",
+            &sb,
+            Some("elm"),
+            &workers,
+            "",
+            "",
+            &strict_spawn_validate_env(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_mismatched_orca_worker_name_and_spawned_by() {
+        let mut workers = HashMap::new();
+        workers.insert(
+            "elm".into(),
+            make_worker_with("elm", "claude", "running", 1),
+        );
+        workers.insert(
+            "foo".into(),
+            make_worker_with("foo", "claude", "running", 1),
+        );
+        let (sb, _) = resolve_spawn_lineage("foo".into(), 0, Some("elm"), &workers);
+        assert_eq!(sb, "foo");
+        assert!(
+            validate_spawn_context(
+                "cc",
+                &sb,
+                Some("elm"),
+                &workers,
+                "",
+                "",
+                &strict_spawn_validate_env()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validate_allows_explicit_parent_when_orca_worker_name_is_stale() {
+        let mut workers = HashMap::new();
+        workers.insert(
+            "parent".into(),
+            make_worker_with("parent", "cc", "running", 1),
+        );
+        validate_spawn_context(
+            "cc",
+            "parent",
+            Some("stale-dead-worker"),
+            &workers,
+            "",
+            "",
+            &strict_spawn_validate_env(),
+        )
+        .unwrap();
     }
 
     // --- Orchestrator vs worker depth (whale chain) ---

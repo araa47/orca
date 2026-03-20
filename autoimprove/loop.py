@@ -23,6 +23,7 @@ Usage:
 
 import argparse
 import datetime
+import os
 import shutil
 import subprocess
 import sys
@@ -342,6 +343,10 @@ def orca_spawn_worker(worker_name: str, task: str, base_branch: str) -> bool:
             text=True,
             timeout=60,
             cwd=PROJECT_DIR,
+            env={
+                **os.environ,
+                "ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR": "1",
+            },
         )
         if r.returncode != 0:
             log(f"  orca spawn failed: {r.stderr[:400] if r.stderr else r.stdout[:400]}")
