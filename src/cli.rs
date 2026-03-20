@@ -1088,7 +1088,8 @@ fn print_node(
     let connector = if is_last { "└── " } else { "├── " };
 
     let short = if w.task.len() > 40 {
-        format!("{}...", &w.task[..40])
+        let end = w.task.floor_char_boundary(40);
+        format!("{}...", &w.task[..end])
     } else {
         w.task.clone()
     };
@@ -1522,6 +1523,17 @@ mod tests {
         w.task = "a".repeat(100);
         workers.insert("long-task".to_string(), w);
         print_tree(&workers);
+    }
+
+    #[test]
+    fn test_print_tree_long_task_multibyte_no_panic() {
+        // Emoji are 4 bytes each; 11 emoji = 44 bytes > 40, slicing at byte 40
+        // would split an emoji without floor_char_boundary
+        let mut workers = HashMap::new();
+        let mut w = make_worker_with("mb-task", "claude", "running", 0);
+        w.task = "🐋".repeat(11); // 44 bytes
+        workers.insert("mb-task".to_string(), w);
+        print_tree(&workers); // should not panic
     }
 
     // -----------------------------------------------------------------------

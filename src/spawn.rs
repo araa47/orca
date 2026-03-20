@@ -297,7 +297,8 @@ pub async fn spawn_worker(opts: SpawnOptions) -> Result<Worker, Box<dyn std::err
         };
 
         let short_task = if opts.task.len() > 60 {
-            format!("{}…", &opts.task[..60])
+            let end = opts.task.floor_char_boundary(60);
+            format!("{}…", &opts.task[..end])
         } else {
             opts.task.clone()
         };
@@ -829,6 +830,35 @@ mod tests {
     // -----------------------------------------------------------------------
     // spawn_worker — long task (>60 chars) tests short_task truncation
     // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn spawn_worker_long_task_multibyte_truncation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tmp_home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("ORCA_HOME", tmp_home.path().to_str().unwrap()) };
+        let _ = crate::config::ensure_home();
+
+        let dir = tmp.path().to_string_lossy().into_owned();
+        ensure_git_repo(&dir).await.unwrap();
+
+        // 16 emoji * 4 bytes = 64 bytes > 60; byte 60 would split an emoji
+        let long_task = "🐋".repeat(16);
+        let opts = SpawnOptions {
+            task: long_task,
+            backend: "claude".into(),
+            project_dir: dir,
+            name: Some("mb-trunc-test".into()),
+            ..Default::default()
+        };
+        let result = spawn_worker(opts).await;
+        // Should fail at tmux, but must not panic on truncation
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            !err.contains("Unknown backend") && !err.contains("Invalid worker name"),
+            "should pass validation, got: {err}"
+        );
+    }
 
     #[tokio::test]
     async fn spawn_worker_long_task_truncation() {
