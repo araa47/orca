@@ -14,20 +14,29 @@ use crate::prompts::{detect_prompt, handle_simple_prompt};
 // ---------------------------------------------------------------------------
 
 /// Run a command and return (exit_code, stdout, stderr).
+///
+/// Applies a 10-second timeout so that a hung subprocess (e.g. tmux
+/// connecting to a stale socket) cannot block the caller forever.
 pub(crate) async fn run_out(cmd: &[&str]) -> (i32, String, String) {
     let (program, args) = cmd.split_first().expect("cmd must not be empty");
-    Command::new(program)
+    let child = match Command::new(program)
         .args(args)
-        .output()
-        .await
-        .map(|o| {
-            (
-                o.status.code().unwrap_or(-1),
-                String::from_utf8_lossy(&o.stdout).into_owned(),
-                String::from_utf8_lossy(&o.stderr).into_owned(),
-            )
-        })
-        .unwrap_or((-1, String::new(), String::new()))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return (-1, String::new(), String::new()),
+    };
+    match tokio::time::timeout(Duration::from_secs(10), child.wait_with_output()).await {
+        Ok(Ok(o)) => (
+            o.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        ),
+        _ => (-1, String::new(), String::new()),
+    }
 }
 
 /// Return the `-S <socket>` args if `$TMUX` is unset but a saved socket exists.
