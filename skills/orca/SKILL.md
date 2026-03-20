@@ -151,6 +151,22 @@ orca report -w <name> -e done              # Report worker lifecycle event (used
 - **L1+ workers** (depth >= 1): Before reporting done, kill your sub-workers with `orca gc --mine`. You spawned them, you clean them up.
 - **L0 orchestrator** (top-level): Do NOT auto-clean workers. The human decides when to kill/gc — they may want to inspect logs or cherry-pick branches first.
 
+## Recovering work after `orca kill` / `gc`
+
+When a worker is killed or garbage-collected, Orca **auto-stashes uncommitted changes** before removing the worktree. Stashes attach to the **main repo**, not the deleted worktree path.
+
+From the **project root** (`-d` directory):
+
+```bash
+git stash list                           # look for "orca-preserving <worker> …"
+git stash show -p stash@{n}              # inspect the diff
+git stash pop                            # or: git stash apply stash@{n}
+```
+
+- **Committed** work on a branch is unaffected by stash; detached commits still need branches per normal Git rules.
+- Pass `--no-stash` to `kill`, `killall`, or `gc` to skip stashing (automation escape hatch).
+- **Debugging:** `$ORCA_HOME/audit.log` has `KILL`, `GC`, and `STASH_PRESERVE` entries; `events/<worker>.jsonl` has lifecycle events; `logs/<worker>.log` has terminal output; `daemon.log` has daemon diagnostics.
+
 ## DO
 
 - Spawn workers for independent tasks that can run in parallel

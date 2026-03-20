@@ -3,6 +3,7 @@
 use std::path::Path;
 use tokio::time::{Duration, sleep};
 
+use crate::config;
 use crate::tmux::run_out;
 
 /// Set a local fallback identity when git user.name/email are unset.
@@ -145,6 +146,51 @@ pub async fn create_worktree(
         msg.push_str(&format!("\nLast error: {last_error}"));
     }
     Err(msg.into())
+}
+
+/// If the worktree has uncommitted changes, stash them so they survive removal.
+/// Returns `true` if a stash was created.
+pub async fn stash_if_dirty(repo: &str, name: &str) -> bool {
+    let wt_dir = Path::new(repo)
+        .join(".worktrees")
+        .join(name)
+        .to_string_lossy()
+        .into_owned();
+
+    if !Path::new(&wt_dir).is_dir() {
+        return false;
+    }
+
+    let (rc, status_out, _) = run_out(&["git", "-C", &wt_dir, "status", "--porcelain"]).await;
+    if rc != 0 || status_out.trim().is_empty() {
+        return false;
+    }
+
+    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let stash_msg = format!("orca-preserving {name} {ts}");
+
+    let (rc, _, stderr) = run_out(&[
+        "git", "-C", &wt_dir, "stash", "push", "-u", "-m", &stash_msg,
+    ])
+    .await;
+
+    if rc != 0 {
+        eprintln!(
+            "Warning: git stash failed for worker '{name}': {}",
+            stderr.trim()
+        );
+        return false;
+    }
+
+    config::audit(&format!(
+        "STASH_PRESERVE worker={name} repo={repo} msg={stash_msg}"
+    ));
+    eprintln!(
+        "Stashed uncommitted changes for '{name}'. Recover from project root:\n  \
+         git stash list   # look for \"{stash_msg}\"\n  \
+         git stash pop    # or: git stash apply stash@{{n}}"
+    );
+    true
 }
 
 /// Remove worktree `.worktrees/<name>`.
@@ -440,6 +486,83 @@ mod tests {
     async fn create_worktree_invalid_repo_path() {
         let result = create_worktree("/nonexistent/__orca__", "worker", "HEAD").await;
         assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // stash_if_dirty
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn stash_if_dirty_on_clean_worktree_returns_false() {
+        let (_dir, path) = make_git_repo().await;
+        let wt = create_worktree(&path, "clean-stash", "HEAD").await.unwrap();
+        assert!(Path::new(&wt).is_dir());
+
+        let stashed = stash_if_dirty(&path, "clean-stash").await;
+        assert!(!stashed, "clean worktree should not produce a stash");
+
+        remove_worktree(&path, "clean-stash").await;
+    }
+
+    #[tokio::test]
+    async fn stash_if_dirty_on_dirty_worktree_returns_true() {
+        let (_dir, path) = make_git_repo().await;
+        let wt = create_worktree(&path, "dirty-stash", "HEAD").await.unwrap();
+
+        std::fs::write(Path::new(&wt).join("new-file.txt"), "uncommitted").unwrap();
+
+        let stashed = stash_if_dirty(&path, "dirty-stash").await;
+        assert!(stashed, "dirty worktree should produce a stash");
+
+        let (rc, stash_list, _) = run_out(&["git", "-C", &path, "stash", "list"]).await;
+        assert_eq!(rc, 0);
+        assert!(
+            stash_list.contains("orca-preserving dirty-stash"),
+            "stash message should contain worker name, got: {stash_list}"
+        );
+
+        remove_worktree(&path, "dirty-stash").await;
+    }
+
+    #[tokio::test]
+    async fn stash_if_dirty_nonexistent_worktree_returns_false() {
+        let (_dir, path) = make_git_repo().await;
+        let stashed = stash_if_dirty(&path, "does-not-exist").await;
+        assert!(!stashed);
+    }
+
+    #[tokio::test]
+    async fn stash_if_dirty_with_modified_tracked_file() {
+        let (_dir, path) = make_git_repo().await;
+        let wt = create_worktree(&path, "mod-stash", "HEAD").await.unwrap();
+
+        let readme = Path::new(&wt).join("README.md");
+        std::fs::write(&readme, "modified content").unwrap();
+
+        let stashed = stash_if_dirty(&path, "mod-stash").await;
+        assert!(stashed, "modified tracked file should produce a stash");
+
+        remove_worktree(&path, "mod-stash").await;
+    }
+
+    #[tokio::test]
+    async fn remove_worktree_after_stash_preserves_stash() {
+        let (_dir, path) = make_git_repo().await;
+        let wt = create_worktree(&path, "preserve-stash", "HEAD")
+            .await
+            .unwrap();
+
+        std::fs::write(Path::new(&wt).join("important.txt"), "do not lose").unwrap();
+
+        stash_if_dirty(&path, "preserve-stash").await;
+        remove_worktree(&path, "preserve-stash").await;
+
+        let (rc, stash_list, _) = run_out(&["git", "-C", &path, "stash", "list"]).await;
+        assert_eq!(rc, 0);
+        assert!(
+            stash_list.contains("orca-preserving preserve-stash"),
+            "stash should survive worktree removal"
+        );
     }
 
     // -----------------------------------------------------------------------

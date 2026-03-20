@@ -73,6 +73,11 @@ Nobody interacts with the daemon directly. It starts automatically and runs sile
 
 ## Lifecycle
 
+### Prerequisites
+
+- **Git** must be available on `PATH`. Orca creates worktrees, stashes uncommitted work, and auto-initializes repos.
+- If the project directory is **not a git repo**, Orca runs `git init`, stages all files, sets a fallback identity (`Orca <orca@localhost>`), and creates an initial commit (`ensure_git_repo`). This fails fast on any error.
+
 ### Spawning a Worker
 
 When the orchestrator runs `orca spawn "fix the login bug"`:
@@ -80,6 +85,7 @@ When the orchestrator runs `orca spawn "fix the login bug"`:
 | Step | What Happens |
 |---|---|
 | **Safety checks** | Verify worker count limit (default: 10) and depth limit (default: 3) aren't exceeded |
+| **Git bootstrap** | Ensure the project directory is a git repo (auto-init if needed via `ensure_git_repo`) |
 | **Code isolation** | Create a git worktree on a fresh branch — the worker can edit files freely without conflicts |
 | **Terminal setup** | Open a new tmux window, named with the worker's name and depth emoji |
 | **Agent launch** | Start the AI agent with the task description in autonomous mode |
@@ -121,11 +127,28 @@ The orchestrator then decides: review logs, send a follow-up, kill, or report ba
 
 ### Cleanup
 
+Before removing a worker's worktree, Orca **auto-stashes** any uncommitted changes so they are not lost:
+
+1. If `git status --porcelain` in the worktree is non-empty, Orca runs `git stash push -u -m "orca-preserving <worker> <timestamp>"`.
+2. The stash attaches to the **main repo** (not the deleted worktree path).
+3. A `STASH_PRESERVE` line is appended to `audit.log` for correlation with `KILL`/`GC` events.
+4. A recovery hint is printed to stderr.
+
+To **skip stashing** (e.g. in automation), pass `--no-stash` to `kill`, `killall`, or `gc`.
+
+**Recovering stashed work** from the project root:
+
+```bash
+git stash list                           # look for "orca-preserving <worker> …"
+git stash show -p stash@{n}              # inspect the diff
+git stash pop                            # or: git stash apply stash@{n}
+```
+
 | Command | Behavior |
 |---|---|
-| `orca kill <name>` | Closes the terminal, removes the worktree, removes from state |
-| `orca gc` | Bulk cleanup of all finished/dead workers |
-| `orca killall --mine` | Kills all workers belonging to the calling orchestrator |
+| `orca kill <name>` | Stashes dirty files, closes the terminal, removes the worktree, removes from state |
+| `orca gc` | Bulk cleanup of all finished/dead workers (stashes dirty files first) |
+| `orca killall --mine` | Kills all workers belonging to the calling orchestrator (stashes dirty files first) |
 
 Sub-workers (L1+) are expected to clean up after themselves before reporting done. The top-level orchestrator lets the human decide when to kill workers — they might want to inspect logs or cherry-pick branches first.
 
@@ -289,6 +312,17 @@ Everything lives in `~/.orca/` by default (configurable via `ORCA_HOME`):
 ```
 
 The state file uses **file locking** so multiple processes (CLI, daemon, multiple agents) can safely read and write simultaneously without corruption.
+
+### Where to Look When Things Go Wrong
+
+| Location | What Gets Recorded |
+|---|---|
+| `$ORCA_HOME/audit.log` | Timestamped lines: `SPAWN`, `KILL`, `KILLALL`, `GC`, `STEER`, `STASH_PRESERVE`, daemon start/stop, hooks |
+| `$ORCA_HOME/events/<worker>.jsonl` | Append-only JSON: `done`, `blocked`, `heartbeat`, `process_exit` from hooks/daemon |
+| `$ORCA_HOME/logs/<worker>.log` | Full captured terminal output per worker |
+| `$ORCA_HOME/daemon.log` | Daemon diagnostics and monitoring events |
+
+`audit.log` is the best single file for correlating lifecycle events (e.g. matching a `KILL` with a preceding `STASH_PRESERVE`).
 
 ---
 
