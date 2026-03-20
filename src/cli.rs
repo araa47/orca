@@ -60,6 +60,29 @@ fn resolve_spawn_lineage(
     (spawned_by, depth)
 }
 
+/// Infer parent worker when a spawn is initiated from inside an existing worker pane.
+///
+/// Priority:
+/// 1) `ORCA_WORKER_NAME` when present and tracked (strict; stale values are handled by validation)
+/// 2) current tmux pane lookup against tracked workers' `pane_id`
+fn infer_implicit_parent(
+    workers: &std::collections::HashMap<String, Worker>,
+    env_worker_name: Option<&str>,
+    current_pane: Option<&str>,
+) -> Option<String> {
+    if let Some(name) = env_worker_name.filter(|s| !s.is_empty()) {
+        if workers.contains_key(name) {
+            return Some(name.to_string());
+        }
+        return None;
+    }
+
+    let pane = current_pane.filter(|p| !p.is_empty())?;
+    workers
+        .iter()
+        .find_map(|(name, w)| (w.pane_id == pane).then(|| name.clone()))
+}
+
 /// Spawn policy flags (normally from `ORCA_*` env vars). Separated for unit tests.
 #[derive(Clone, Copy)]
 struct SpawnValidateEnv {
@@ -514,9 +537,17 @@ fn cmd_spawn(
     };
 
     let workers = state::load_workers();
-    let implicit = std::env::var("ORCA_WORKER_NAME")
+    let implicit_env = std::env::var("ORCA_WORKER_NAME")
         .ok()
         .filter(|s| !s.is_empty());
+    let current_pane = if implicit_env.is_none() {
+        let p = tmux::detect_current_pane();
+        (!p.is_empty()).then_some(p)
+    } else {
+        None
+    };
+    let implicit =
+        infer_implicit_parent(&workers, implicit_env.as_deref(), current_pane.as_deref());
     let (spawned_by, depth) =
         resolve_spawn_lineage(spawned_by, depth, implicit.as_deref(), &workers);
 
@@ -524,7 +555,7 @@ fn cmd_spawn(
     if let Err(msg) = validate_spawn_context(
         &orchestrator,
         &spawned_by,
-        implicit.as_deref(),
+        implicit_env.as_deref().or(implicit.as_deref()),
         &workers,
         &reply_channel,
         &reply_to,
@@ -1366,6 +1397,50 @@ mod tests {
         let (sb, d) = resolve_spawn_lineage("ghost".into(), 1, None, &workers);
         assert_eq!(sb, "ghost");
         assert_eq!(d, 1);
+    }
+
+    #[test]
+    fn test_infer_implicit_parent_prefers_tracked_env_worker_name() {
+        let mut workers = std::collections::HashMap::new();
+        let mut w = make_worker_with("w1", "claude", "running", 1);
+        w.pane_id = "%9".into();
+        workers.insert("w1".into(), w);
+
+        let inferred = infer_implicit_parent(&workers, Some("w1"), Some("%7"));
+        assert_eq!(inferred.as_deref(), Some("w1"));
+    }
+
+    #[test]
+    fn test_infer_implicit_parent_falls_back_to_pane_match() {
+        let mut workers = std::collections::HashMap::new();
+        let mut w = make_worker_with("pane-parent", "claude", "running", 1);
+        w.pane_id = "%42".into();
+        workers.insert("pane-parent".into(), w);
+
+        let inferred = infer_implicit_parent(&workers, None, Some("%42"));
+        assert_eq!(inferred.as_deref(), Some("pane-parent"));
+    }
+
+    #[test]
+    fn test_infer_implicit_parent_returns_none_for_unknown_env_or_pane() {
+        let workers = std::collections::HashMap::new();
+        assert!(infer_implicit_parent(&workers, Some("ghost"), Some("%1")).is_none());
+        assert!(infer_implicit_parent(&workers, None, Some("%1")).is_none());
+    }
+
+    #[test]
+    fn test_pane_inferred_parent_advances_child_depth_to_l2() {
+        let mut workers = std::collections::HashMap::new();
+        let mut parent = make_worker_with("mud", "claude", "running", 1);
+        parent.pane_id = "%109".into();
+        workers.insert("mud".into(), parent);
+
+        let implicit = infer_implicit_parent(&workers, None, Some("%109"));
+        let (spawned_by, cli_depth) =
+            resolve_spawn_lineage(String::new(), 0, implicit.as_deref(), &workers);
+        assert_eq!(spawned_by, "mud");
+        assert_eq!(cli_depth + 1, 2);
+        assert_eq!(depth_label(cli_depth + 1), "🐬 L2");
     }
 
     fn strict_spawn_validate_env() -> SpawnValidateEnv {

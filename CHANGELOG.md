@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-03-20
+
+### Fixed
+
+- **Nested lineage fallback when `ORCA_WORKER_NAME` is missing:** `orca spawn` now infers parentage from the current tmux pane (`pane_id`) when env-based parent inference is unavailable. This prevents delegated workers spawned from an L1 pane from silently becoming root `🐳 L1` workers with empty `spawned_by`; they now inherit the real parent and resolve to `🐬 L2`/deeper as expected.
+
+### Added
+
+- **Lineage regression tests:** added CLI unit tests covering parent inference priority (env first, pane fallback) and depth promotion (`L1` parent -> `L2` child) when parent is inferred from pane context.
+
 ## [0.0.5] - 2026-03-20
 
 ### Added
@@ -76,7 +86,8 @@ _(This release was tagged without a changelog entry; summarized here retroactive
 - Claude Code, Codex, and Cursor as worker backends.
 - Pre-commit/prek hooks (fmt, clippy, yaml, codespell); CI split into job-prek and job-test.
 
-[Unreleased]: https://github.com/araa47/orca/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/araa47/orca/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/araa47/orca/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/araa47/orca/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/araa47/orca/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/araa47/orca/compare/v0.0.2...v0.0.3
