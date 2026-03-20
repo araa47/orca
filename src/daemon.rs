@@ -117,8 +117,10 @@ fn release_pid_lock() {
         unsafe {
             libc::close(fd);
         }
+        // Only unlink the pidfile when we held the daemon lock; otherwise a no-op
+        // release (e.g. tests) must not delete the file — parallel tests share one path.
+        let _ = fs::remove_file(config::daemon_pid_file());
     }
-    let _ = fs::remove_file(config::daemon_pid_file());
 }
 
 fn remove_pid() {
