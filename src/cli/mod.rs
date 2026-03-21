@@ -9,26 +9,12 @@ use regex::Regex;
 use crate::config;
 use crate::daemon;
 use crate::events;
-use crate::spawn::{self, SpawnOptions, truncate_task};
+use crate::spawn::{self, SpawnOptions, depth_emoji, truncate_task};
 use crate::state::{self, Worker};
 use crate::tmux;
 use crate::worktree;
 
 use crate::config::audit;
-
-// ---------------------------------------------------------------------------
-// Depth labels
-// ---------------------------------------------------------------------------
-
-fn depth_emoji(depth: u32) -> &'static str {
-    match depth {
-        0 => "🐋",
-        1 => "🐳",
-        2 => "🐬",
-        3 => "🐟",
-        _ => "🦐",
-    }
-}
 
 fn depth_label(depth: u32) -> String {
     let emoji = depth_emoji(depth);

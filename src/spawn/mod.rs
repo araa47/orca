@@ -18,8 +18,6 @@ use crate::worktree::{create_worktree, ensure_git_repo, remove_worktree};
 #[allow(dead_code)]
 pub const PROMPT_FILE_THRESHOLD: usize = 0; // always write prompt to file for safe shell escaping
 
-const DEPTH_EMOJIS: &[(u32, &str)] = &[(0, "🐋"), (1, "🐳"), (2, "🐬"), (3, "🐟"), (4, "🦐")];
-
 const REPORT_INSTRUCTIONS: &str = "\n\n---\n\
     LIFECYCLE REPORTING (mandatory):\n\
     When you finish this task, run this shell command BEFORE your final message:\n\
@@ -29,13 +27,14 @@ const REPORT_INSTRUCTIONS: &str = "\n\n---\n\
     These commands are essential for orchestration. Do not skip them.\n\
     ---\n";
 
-fn depth_emoji(depth: u32) -> &'static str {
-    for &(d, emoji) in DEPTH_EMOJIS {
-        if d == depth {
-            return emoji;
-        }
+pub(crate) fn depth_emoji(depth: u32) -> &'static str {
+    match depth {
+        0 => "🐋",
+        1 => "🐳",
+        2 => "🐬",
+        3 => "🐟",
+        _ => "🦐",
     }
-    "🦐"
 }
 
 pub(crate) fn truncate_task(task: &str, max_chars: usize) -> String {
@@ -48,8 +47,9 @@ pub(crate) fn truncate_task(task: &str, max_chars: usize) -> String {
 }
 
 fn sh_quote(s: &str) -> String {
-    let safe = Regex::new(r"^[a-zA-Z0-9_./-]+$").unwrap();
-    if safe.is_match(s) {
+    static SAFE: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9_./-]+$").unwrap());
+    if SAFE.is_match(s) {
         return s.to_string();
     }
     format!("'{}'", s.replace('\'', "'\\''"))

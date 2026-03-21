@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Replace panic with graceful error on fork failure:** `start_daemon_background()` no longer panics when `fork()` fails — it prints an error and returns 0 (callers already handle this as "daemon not started").
+- **Avoid regex recompilation in `sh_quote()`:** the shell-safe regex is now compiled once via `LazyLock` instead of on every call.
+- **Deduplicate `depth_emoji()`:** removed the identical copy from `cli/mod.rs`; both `cli` and `spawn` now share the single definition in `spawn`.
+
 ## [0.0.7] - 2026-03-21
 
 ### Changed

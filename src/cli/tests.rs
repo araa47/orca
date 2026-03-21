@@ -14,16 +14,6 @@ fn test_audit_writes_to_file() {
 }
 
 #[test]
-fn test_depth_emoji() {
-    assert_eq!(depth_emoji(0), "🐋");
-    assert_eq!(depth_emoji(1), "🐳");
-    assert_eq!(depth_emoji(2), "🐬");
-    assert_eq!(depth_emoji(3), "🐟");
-    assert_eq!(depth_emoji(4), "🦐");
-    assert_eq!(depth_emoji(100), "🦐");
-}
-
-#[test]
 fn test_depth_label() {
     assert_eq!(depth_label(0), "🐋 L0");
     assert_eq!(depth_label(1), "🐳 L1");
@@ -1270,13 +1260,6 @@ fn test_filter_workers_by_scope_both_pane_and_session() {
     assert_eq!(result.len(), 2);
     assert!(result.contains_key("by-pane"));
     assert!(result.contains_key("by-session"));
-}
-
-#[test]
-fn test_depth_emoji_boundary() {
-    assert_eq!(depth_emoji(4), "🦐");
-    assert_eq!(depth_emoji(5), "🦐");
-    assert_eq!(depth_emoji(u32::MAX), "🦐");
 }
 
 #[test]
