@@ -1510,15 +1510,14 @@ fn test_print_tree_multiple_l0_orchestrators() {
 #[test]
 fn test_l0_openclaw_not_killable() {
     let l0 = make_l0_worker("openclaw", "openclaw", "", "/proj", "", "main");
-    // Verify the condition that cmd_kill checks
-    assert!(l0.depth == 0 && l0.spawned_by.is_empty() && l0.backend == "openclaw");
+    assert!(l0.depth == 0 && l0.spawned_by.is_empty());
 }
 
 #[test]
-fn test_l0_cc_is_killable() {
+fn test_l0_cc_not_killable() {
     let l0 = make_l0_worker("rook", "claude", "%5", "/proj", "", "main");
-    // cc/cx/cu L0 entries should NOT match the openclaw kill-protection condition
-    assert!(!(l0.depth == 0 && l0.spawned_by.is_empty() && l0.backend == "openclaw"));
+    // All L0 entries are protected, not just openclaw
+    assert!(l0.depth == 0 && l0.spawned_by.is_empty());
 }
 
 #[test]

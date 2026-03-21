@@ -226,6 +226,12 @@ async fn check_workers_inner(ds: &mut DaemonState) {
         .retain(|k, _| worker_names.contains(k));
 
     for (name, worker) in &workers {
+        // Skip L0 orchestrator entries — they are bookkeeping, not real workers.
+        // Monitoring them causes false idle/done detection on the orchestrator's pane.
+        if worker.depth == 0 && worker.spawned_by.is_empty() {
+            continue;
+        }
+
         if worker.status != "running" && worker.status != "blocked" {
             ds.clear_tracking(name);
             continue;
@@ -606,8 +612,21 @@ pub async fn run_daemon() {
     log_msg("Daemon stopped");
 }
 
+/// Whether a tmux session is reachable (via `$TMUX` or saved socket).
+/// Without tmux the daemon cannot monitor panes or deliver notifications.
+pub fn can_reach_tmux() -> bool {
+    if !std::env::var("TMUX").unwrap_or_default().is_empty() {
+        return true;
+    }
+    config::load_tmux_socket().is_some()
+}
+
 /// Fork a daemon process. Returns the actual daemon PID.
+/// Returns 0 without forking when tmux is unreachable.
 pub fn start_daemon_background() -> u32 {
+    if !can_reach_tmux() {
+        return 0;
+    }
     let _ = config::ensure_home();
 
     unsafe {

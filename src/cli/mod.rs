@@ -715,9 +715,11 @@ fn cmd_spawn(
         process::exit(1);
     }
 
-    if !daemon::is_daemon_running() {
+    if !daemon::is_daemon_running() && daemon::can_reach_tmux() {
         let pid = daemon::start_daemon_background();
-        println!("Daemon started (pid={pid})");
+        if pid > 0 {
+            println!("Daemon started (pid={pid})");
+        }
     }
 
     let prompt = task.join(" ");
@@ -1044,10 +1046,11 @@ fn cmd_kill(name: &str, no_stash: bool) {
         process::exit(1);
     };
 
-    // Protect virtual L0 orchestrators (openclaw) from being killed
-    if w.depth == 0 && w.spawned_by.is_empty() && w.backend == "openclaw" {
+    // Protect L0 orchestrator entries — they represent the orchestrator itself,
+    // not a spawned worker. Killing them would destroy the orchestrator's pane.
+    if w.depth == 0 && w.spawned_by.is_empty() {
         eprintln!(
-            "Error: '{name}' is a virtual L0 orchestrator (openclaw) and cannot be killed. \
+            "Error: '{name}' is an L0 orchestrator entry and cannot be killed. \
              Use `orca killall` to clean up its workers instead."
         );
         process::exit(1);
