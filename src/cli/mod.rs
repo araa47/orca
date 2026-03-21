@@ -148,11 +148,18 @@ fn ensure_l0_orchestrator(
         return Ok("openclaw".to_string());
     }
 
-    // cc/cx/cu L0: find existing entry by pane or create a new one
+    // cc/cx/cu L0: find existing entry by pane or create a new one.
+    // Defense-in-depth: if the pane already belongs to a tracked worker at
+    // depth > 0, return that worker's name instead of creating a ghost L0.
     if !pane.is_empty() {
         for (name, w) in workers.iter() {
-            if w.depth == 0 && w.spawned_by.is_empty() && w.pane_id == pane {
-                return Ok(name.clone());
+            if w.pane_id == pane {
+                if w.depth > 0 {
+                    return Ok(name.clone());
+                }
+                if w.spawned_by.is_empty() {
+                    return Ok(name.clone());
+                }
             }
         }
     }
@@ -675,6 +682,21 @@ fn cmd_spawn(
         eprintln!("{msg}");
         process::exit(1);
     }
+
+    // Resolve `--spawned-by self` to the actual worker name when the calling
+    // pane already belongs to a tracked worker (depth > 0).  Cursor workers
+    // don't have ORCA_WORKER_NAME in their env, so they fall back to `self`
+    // even when they are L2+ — without this resolution they would accidentally
+    // register a ghost L0 entry via ensure_l0_orchestrator.
+    let raw_spawned_by = if raw_spawned_by == "self" && !pane.is_empty() {
+        workers
+            .iter()
+            .find(|(_, w)| w.pane_id == pane && w.depth > 0)
+            .map(|(name, _)| name.clone())
+            .unwrap_or(raw_spawned_by)
+    } else {
+        raw_spawned_by
+    };
 
     // If this is an L0 root marker, auto-register the L0 orchestrator entry
     let spawned_by = if is_root_spawn_marker(&raw_spawned_by) {

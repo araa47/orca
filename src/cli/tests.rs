@@ -1462,6 +1462,143 @@ fn test_validate_self_not_rejected_as_unknown_parent() {
 }
 
 // -----------------------------------------------------------------------
+// I) --spawned-by self resolution for depth > 0 workers (v0.0.8 fix)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_ensure_l0_returns_existing_worker_when_pane_matches_depth_gt0() {
+    let mut workers = HashMap::new();
+    // L0 root
+    let l0 = make_l0_worker("rook", "cursor", "%10", "/proj", "", "main");
+    workers.insert("rook".to_string(), l0);
+    // L2 worker `fen` running in pane %42
+    let mut fen = make_worker_with("fen", "cursor", "running", 2);
+    fen.pane_id = "%42".into();
+    fen.spawned_by = "cog".into();
+    workers.insert("fen".to_string(), fen);
+
+    // When ensure_l0_orchestrator is called with pane=%42 (fen's pane),
+    // it should return "fen" instead of creating a ghost L0 entry.
+    let result =
+        ensure_l0_orchestrator("self", "cu", "%42", "/proj", "", "main", &mut workers);
+    assert_eq!(result.unwrap(), "fen");
+    // No new L0 entry should have been created
+    assert_eq!(workers.len(), 2);
+}
+
+#[test]
+fn test_ensure_l0_still_creates_l0_when_pane_has_no_worker() {
+    let mut workers = HashMap::new();
+    // No worker owns pane %99 — genuine L0 case
+    let result =
+        ensure_l0_orchestrator("self", "cu", "%99", "/proj", "", "main", &mut workers);
+    let name = result.unwrap();
+    // A new L0 entry should have been created
+    assert_eq!(workers.len(), 1);
+    let created = &workers[&name];
+    assert_eq!(created.depth, 0);
+    assert!(created.spawned_by.is_empty());
+}
+
+#[test]
+fn test_ensure_l0_returns_existing_l0_when_pane_matches_depth_0() {
+    let mut workers = HashMap::new();
+    let l0 = make_l0_worker("rook", "cursor", "%10", "/proj", "", "main");
+    workers.insert("rook".to_string(), l0);
+
+    // Pane %10 already has an L0 entry — should return it
+    let result =
+        ensure_l0_orchestrator("self", "cu", "%10", "/proj", "", "main", &mut workers);
+    assert_eq!(result.unwrap(), "rook");
+    assert_eq!(workers.len(), 1);
+}
+
+#[test]
+fn test_resolve_self_to_depth_gt0_worker_by_pane() {
+    // Simulate what cmd_spawn does: resolve `self` before L0 check
+    let mut workers = HashMap::new();
+    let mut fen = make_worker_with("fen", "cursor", "running", 2);
+    fen.pane_id = "%42".into();
+    fen.spawned_by = "cog".into();
+    workers.insert("fen".to_string(), fen);
+
+    let raw_spawned_by = "self".to_string();
+    let pane = "%42";
+    let resolved = if raw_spawned_by == "self" && !pane.is_empty() {
+        workers
+            .iter()
+            .find(|(_, w)| w.pane_id == pane && w.depth > 0)
+            .map(|(name, _)| name.clone())
+            .unwrap_or(raw_spawned_by.clone())
+    } else {
+        raw_spawned_by.clone()
+    };
+
+    assert_eq!(resolved, "fen");
+    assert!(!is_root_spawn_marker(&resolved));
+    // Now resolve_spawn_lineage should give depth 3
+    let (sb, d) = resolve_spawn_lineage(resolved, 0, &workers);
+    assert_eq!(sb, "fen");
+    assert_eq!(d, 3);
+}
+
+#[test]
+fn test_resolve_self_unchanged_when_no_pane_match() {
+    let workers: HashMap<String, Worker> = HashMap::new();
+    let raw_spawned_by = "self".to_string();
+    let pane = "%99";
+    let resolved = if raw_spawned_by == "self" && !pane.is_empty() {
+        workers
+            .iter()
+            .find(|(_, w)| w.pane_id == pane && w.depth > 0)
+            .map(|(name, _)| name.clone())
+            .unwrap_or(raw_spawned_by.clone())
+    } else {
+        raw_spawned_by.clone()
+    };
+
+    assert_eq!(resolved, "self");
+    assert!(is_root_spawn_marker(&resolved));
+}
+
+#[test]
+fn test_full_chain_self_resolves_correctly_for_l2_worker() {
+    // Simulate: openclaw → cog (L1) → fen (L2) → fen spawns ash
+    // fen uses --spawned-by self because ORCA_WORKER_NAME is unset
+    let mut workers = HashMap::new();
+    let l0 = make_l0_worker("openclaw", "openclaw", "", "/proj", "s1", "main");
+    workers.insert("openclaw".to_string(), l0);
+    let mut cog = make_worker_with("cog", "codex", "running", 1);
+    cog.spawned_by = "openclaw".into();
+    cog.pane_id = "%20".into();
+    workers.insert("cog".to_string(), cog);
+    let mut fen = make_worker_with("fen", "cursor", "running", 2);
+    fen.spawned_by = "cog".into();
+    fen.pane_id = "%42".into();
+    workers.insert("fen".to_string(), fen);
+
+    // fen runs `orca spawn ... --spawned-by self` from pane %42
+    let raw = "self".to_string();
+    let pane = "%42";
+    let resolved = if raw == "self" && !pane.is_empty() {
+        workers
+            .iter()
+            .find(|(_, w)| w.pane_id == pane && w.depth > 0)
+            .map(|(n, _)| n.clone())
+            .unwrap_or(raw.clone())
+    } else {
+        raw.clone()
+    };
+
+    assert_eq!(resolved, "fen", "self should resolve to fen");
+    assert!(!is_root_spawn_marker(&resolved));
+
+    let (spawned_by, depth) = resolve_spawn_lineage(resolved, 0, &workers);
+    assert_eq!(spawned_by, "fen");
+    assert_eq!(depth, 3, "ash should be L3");
+}
+
+// -----------------------------------------------------------------------
 // L0 kill protection and filtering
 // -----------------------------------------------------------------------
 
