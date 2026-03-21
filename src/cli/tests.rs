@@ -1462,8 +1462,7 @@ fn test_ensure_l0_returns_existing_worker_when_pane_matches_depth_gt0() {
 
     // When ensure_l0_orchestrator is called with pane=%42 (fen's pane),
     // it should return "fen" instead of creating a ghost L0 entry.
-    let result =
-        ensure_l0_orchestrator("self", "cu", "%42", "/proj", "", "main", &mut workers);
+    let result = ensure_l0_orchestrator("self", "cu", "%42", "/proj", "", "main", &mut workers);
     assert_eq!(result.unwrap(), "fen");
     // No new L0 entry should have been created
     assert_eq!(workers.len(), 2);
@@ -1473,8 +1472,7 @@ fn test_ensure_l0_returns_existing_worker_when_pane_matches_depth_gt0() {
 fn test_ensure_l0_still_creates_l0_when_pane_has_no_worker() {
     let mut workers = HashMap::new();
     // No worker owns pane %99 — genuine L0 case
-    let result =
-        ensure_l0_orchestrator("self", "cu", "%99", "/proj", "", "main", &mut workers);
+    let result = ensure_l0_orchestrator("self", "cu", "%99", "/proj", "", "main", &mut workers);
     let name = result.unwrap();
     // A new L0 entry should have been created
     assert_eq!(workers.len(), 1);
@@ -1490,8 +1488,7 @@ fn test_ensure_l0_returns_existing_l0_when_pane_matches_depth_0() {
     workers.insert("rook".to_string(), l0);
 
     // Pane %10 already has an L0 entry — should return it
-    let result =
-        ensure_l0_orchestrator("self", "cu", "%10", "/proj", "", "main", &mut workers);
+    let result = ensure_l0_orchestrator("self", "cu", "%10", "/proj", "", "main", &mut workers);
     assert_eq!(result.unwrap(), "rook");
     assert_eq!(workers.len(), 1);
 }
