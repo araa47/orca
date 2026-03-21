@@ -19,6 +19,7 @@ use crate::events;
 use crate::prompts;
 use crate::state::{self, Worker};
 use crate::tmux;
+use crate::types::WorkerStatus;
 use crate::wake;
 
 const ESCALATION_COOLDOWN: f64 = 60.0;
@@ -232,7 +233,7 @@ async fn check_workers_inner(ds: &mut DaemonState) {
             continue;
         }
 
-        if worker.status != "running" && worker.status != "blocked" {
+        if !worker.status.is_active() {
             ds.clear_tracking(name);
             continue;
         }
@@ -243,7 +244,7 @@ async fn check_workers_inner(ds: &mut DaemonState) {
                 "Worker {name} has done_reported=True — marking done"
             ));
             ds.clear_tracking(name);
-            if let Ok(Some(updated)) = state::update_worker_status(name, "done") {
+            if let Ok(Some(updated)) = state::update_worker_status(name, WorkerStatus::Done) {
                 if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let _ = tokio::runtime::Handle::current();
                 })) {
@@ -259,7 +260,11 @@ async fn check_workers_inner(ds: &mut DaemonState) {
         // Process exited: determine final status
         if worker.process_exited {
             let done = worker.done_reported || events::has_done_event(name);
-            let final_status = if done { "done" } else { "dead" };
+            let final_status = if done {
+                WorkerStatus::Done
+            } else {
+                WorkerStatus::Dead
+            };
             log_msg(&format!(
                 "Worker {name} process exited — marking {final_status}"
             ));
@@ -284,12 +289,12 @@ async fn check_workers_inner(ds: &mut DaemonState) {
                 log_msg(&format!(
                     "Worker {name} pane died with done event — marking done"
                 ));
-                "done"
+                WorkerStatus::Done
             } else {
                 log_msg(&format!(
                     "Worker {name} pane died without done event — marking dead"
                 ));
-                "dead"
+                WorkerStatus::Dead
             };
             ds.clear_tracking(name);
             if let Ok(Some(updated)) = state::update_worker_status(name, final_status) {
@@ -299,7 +304,7 @@ async fn check_workers_inner(ds: &mut DaemonState) {
             continue;
         }
 
-        if worker.status == "blocked" {
+        if worker.status == WorkerStatus::Blocked {
             continue;
         }
 
@@ -343,7 +348,7 @@ async fn check_stuck(
 
     // Watchdog mode: no events for WATCHDOG_QUIET_SECS
 
-    if tmux::is_agent_idle(&output, &worker.backend) {
+    if tmux::is_agent_idle(&output, &worker.backend.to_string()) {
         if parse_worker_age(&worker.started_at) < IDLE_MIN_LIFETIME {
             ds.idle_seen.remove(name);
             ds.idle_output_hash.remove(name);
@@ -411,7 +416,7 @@ async fn check_stuck(
                     "Worker {name} idle + done_reported — marking done"
                 ));
                 ds.clear_tracking(name);
-                if let Ok(Some(updated)) = state::update_worker_status(name, "done") {
+                if let Ok(Some(updated)) = state::update_worker_status(name, WorkerStatus::Done) {
                     wake::wake_orchestrator(&updated).await;
                     log_msg(&format!("Woke orchestrator for idle worker {name}"));
                 }

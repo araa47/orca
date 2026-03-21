@@ -1,14 +1,16 @@
 use super::*;
+use crate::types::{Backend, Orchestrator, WorkerStatus};
 
 fn make_worker(name: &str, backend: &str) -> Worker {
+    let b: Backend = backend.parse().unwrap_or(Backend::Claude);
     Worker {
         name: name.to_string(),
-        backend: backend.to_string(),
+        backend: b,
         task: "test task".to_string(),
         dir: "/tmp/test".to_string(),
         workdir: "/tmp/test".to_string(),
         base_branch: "main".to_string(),
-        orchestrator: "cc".to_string(),
+        orchestrator: Orchestrator::Backend(Backend::Claude),
         orchestrator_pane: "%0".to_string(),
         session_id: String::new(),
         reply_channel: String::new(),
@@ -18,7 +20,7 @@ fn make_worker(name: &str, backend: &str) -> Worker {
         depth: 0,
         spawned_by: String::new(),
         layout: "window".to_string(),
-        status: "running".to_string(),
+        status: WorkerStatus::Running,
         started_at: "2026-01-01T00:00:00Z".to_string(),
         last_event_at: String::new(),
         done_reported: false,
@@ -28,7 +30,9 @@ fn make_worker(name: &str, backend: &str) -> Worker {
 
 fn make_worker_with_orchestrator(name: &str, backend: &str, orchestrator: &str) -> Worker {
     let mut w = make_worker(name, backend);
-    w.orchestrator = orchestrator.to_string();
+    w.orchestrator = orchestrator
+        .parse::<Orchestrator>()
+        .unwrap_or(Orchestrator::None);
     w
 }
 

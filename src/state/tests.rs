@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::{Backend, Orchestrator, WorkerStatus};
 use std::sync::{Mutex, MutexGuard};
 
 static STATE_TEST_MUTEX: Mutex<()> = Mutex::new(());
@@ -28,12 +29,12 @@ fn init_test_home() -> TestOrcaHome {
 fn make_worker(name: &str) -> Worker {
     Worker {
         name: name.to_string(),
-        backend: "claude".to_string(),
+        backend: Backend::Claude,
         task: "test task".to_string(),
         dir: "/tmp/test".to_string(),
         workdir: "/tmp/test".to_string(),
         base_branch: "main".to_string(),
-        orchestrator: "cc".to_string(),
+        orchestrator: Orchestrator::Backend(Backend::Claude),
         orchestrator_pane: "%0".to_string(),
         session_id: "sess-1".to_string(),
         reply_channel: String::new(),
@@ -43,7 +44,7 @@ fn make_worker(name: &str) -> Worker {
         depth: 0,
         spawned_by: String::new(),
         layout: "window".to_string(),
-        status: "running".to_string(),
+        status: WorkerStatus::Running,
         started_at: "2026-01-01T00:00:00Z".to_string(),
         last_event_at: String::new(),
         done_reported: false,
@@ -65,6 +66,7 @@ fn worker_serialization_roundtrip() {
     assert_eq!(w.backend, w2.backend);
     assert_eq!(w.task, w2.task);
     assert_eq!(w.status, w2.status);
+    assert_eq!(w.orchestrator, w2.orchestrator);
 }
 
 #[test]
@@ -80,7 +82,7 @@ fn worker_default_values() {
     });
     let w: Worker = serde_json::from_value(json).unwrap();
     assert_eq!(w.layout, "window");
-    assert_eq!(w.status, "running");
+    assert_eq!(w.status, WorkerStatus::Running);
     assert_eq!(w.depth, 0);
     assert_eq!(w.spawned_by, "");
     assert_eq!(w.pane_id, "");
@@ -130,7 +132,7 @@ fn save_and_load_worker() {
     assert!(loaded.is_some());
     let loaded = loaded.unwrap();
     assert_eq!(loaded.name, name);
-    assert_eq!(loaded.backend, "claude");
+    assert_eq!(loaded.backend, Backend::Claude);
     assert_eq!(loaded.task, "test task");
 
     // Cleanup
@@ -162,13 +164,13 @@ fn update_worker_status_test() {
     let w = make_worker(&name);
     save_worker(&w, true).unwrap();
 
-    let updated = update_worker_status(&name, "done").unwrap();
+    let updated = update_worker_status(&name, WorkerStatus::Done).unwrap();
     assert!(updated.is_some());
-    assert_eq!(updated.unwrap().status, "done");
+    assert_eq!(updated.unwrap().status, WorkerStatus::Done);
 
     // Verify persisted (may be None if ORCA_HOME OnceLock diverged across test modules)
     if let Some(loaded) = get_worker(&name) {
-        assert_eq!(loaded.status, "done");
+        assert_eq!(loaded.status, WorkerStatus::Done);
     }
 
     // Cleanup
@@ -178,7 +180,7 @@ fn update_worker_status_test() {
 #[test]
 fn update_worker_status_nonexistent() {
     let _home = init_test_home();
-    let result = update_worker_status("nonexistent_xyz_88888", "done").unwrap();
+    let result = update_worker_status("nonexistent_xyz_88888", WorkerStatus::Done).unwrap();
     assert!(result.is_none());
 }
 
@@ -218,7 +220,7 @@ fn count_running_by_orchestrator_test() {
     let mut w = make_worker(&name);
     w.orchestrator_pane = "%99".to_string();
     w.session_id = "unique-sess-count".to_string();
-    w.status = "running".to_string();
+    w.status = WorkerStatus::Running;
     save_worker(&w, true).unwrap();
 
     let count = count_running_by_orchestrator("%99", "");
@@ -239,14 +241,14 @@ fn count_running_skips_non_running() {
     let name = uid("count_skip");
     let mut w = make_worker(&name);
     w.orchestrator_pane = "%98".to_string();
-    w.status = "done".to_string();
+    w.status = WorkerStatus::Done;
     save_worker(&w, true).unwrap();
 
     let count = count_running_by_orchestrator("%98", "");
     // Should not count done workers
     let all_running_98: usize = load_workers()
         .values()
-        .filter(|w| w.status == "running" && w.orchestrator_pane == "%98")
+        .filter(|w| w.status == WorkerStatus::Running && w.orchestrator_pane == "%98")
         .count();
     assert_eq!(count, all_running_98);
 
@@ -260,12 +262,12 @@ fn has_running_children_detects_spawned_by() {
     let child = uid("kid_run_ch");
 
     let mut w_parent = make_worker(&parent);
-    w_parent.status = "running".to_string();
+    w_parent.status = WorkerStatus::Running;
     save_worker(&w_parent, true).unwrap();
 
     let mut w_child = make_worker(&child);
     w_child.spawned_by = parent.clone();
-    w_child.status = "running".to_string();
+    w_child.status = WorkerStatus::Running;
     save_worker(&w_child, true).unwrap();
 
     assert!(has_running_children(&parent));
@@ -281,12 +283,12 @@ fn has_running_children_false_when_only_done_kids() {
     let child = uid("kid_done_k");
 
     let mut w_parent = make_worker(&parent);
-    w_parent.status = "running".to_string();
+    w_parent.status = WorkerStatus::Running;
     save_worker(&w_parent, true).unwrap();
 
     let mut w_child = make_worker(&child);
     w_child.spawned_by = parent.clone();
-    w_child.status = "done".to_string();
+    w_child.status = WorkerStatus::Done;
     save_worker(&w_child, true).unwrap();
 
     assert!(!has_running_children(&parent));
@@ -302,12 +304,12 @@ fn has_running_children_detects_blocked_child() {
     let child = uid("kid_blocked_ch");
 
     let mut w_parent = make_worker(&parent);
-    w_parent.status = "running".to_string();
+    w_parent.status = WorkerStatus::Running;
     save_worker(&w_parent, true).unwrap();
 
     let mut w_child = make_worker(&child);
     w_child.spawned_by = parent.clone();
-    w_child.status = "blocked".to_string();
+    w_child.status = WorkerStatus::Blocked;
     save_worker(&w_child, true).unwrap();
 
     assert!(has_running_children(&parent));
@@ -325,15 +327,15 @@ fn gc_workers_removes_done_dead_destroyed() {
     let name_running = uid("gc_running");
 
     let mut w1 = make_worker(&name_done);
-    w1.status = "done".to_string();
+    w1.status = WorkerStatus::Done;
     save_worker(&w1, true).unwrap();
 
     let mut w2 = make_worker(&name_dead);
-    w2.status = "dead".to_string();
+    w2.status = WorkerStatus::Dead;
     save_worker(&w2, true).unwrap();
 
     let mut w3 = make_worker(&name_destroyed);
-    w3.status = "destroyed".to_string();
+    w3.status = WorkerStatus::Destroyed;
     save_worker(&w3, true).unwrap();
 
     let w4 = make_worker(&name_running);

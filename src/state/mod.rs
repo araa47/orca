@@ -9,6 +9,7 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 
 use crate::config;
+use crate::types::{Backend, Orchestrator, WorkerStatus};
 
 /// Error returned when saving a worker that already exists and overwrite is not allowed.
 #[derive(Debug)]
@@ -26,12 +27,12 @@ impl std::error::Error for DuplicateWorkerError {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Worker {
     pub name: String,
-    pub backend: String,
+    pub backend: Backend,
     pub task: String,
     pub dir: String,
     pub workdir: String,
     pub base_branch: String,
-    pub orchestrator: String,
+    pub orchestrator: Orchestrator,
     #[serde(default)]
     pub orchestrator_pane: String,
     #[serde(default)]
@@ -50,8 +51,8 @@ pub struct Worker {
     pub spawned_by: String,
     #[serde(default = "default_layout")]
     pub layout: String,
-    #[serde(default = "default_status")]
-    pub status: String,
+    #[serde(default)]
+    pub status: WorkerStatus,
     #[serde(default = "default_started_at")]
     pub started_at: String,
     #[serde(default)]
@@ -64,10 +65,6 @@ pub struct Worker {
 
 fn default_layout() -> String {
     "window".to_string()
-}
-
-fn default_status() -> String {
-    "running".to_string()
 }
 
 fn default_started_at() -> String {
@@ -209,7 +206,7 @@ pub fn save_worker(
 }
 
 /// Update only the status field of a worker. Returns the updated worker or `None`.
-pub fn update_worker_status(name: &str, status: &str) -> std::io::Result<Option<Worker>> {
+pub fn update_worker_status(name: &str, status: WorkerStatus) -> std::io::Result<Option<Worker>> {
     let _lock = StateLock::acquire()?;
     let mut raw = load_raw();
     let entry = match raw.get_mut(name) {
@@ -272,7 +269,7 @@ pub fn count_running_by_orchestrator(orchestrator_pane: &str, session_id: &str) 
     load_workers()
         .values()
         .filter(|w| {
-            if w.status != "running" {
+            if w.status != WorkerStatus::Running {
                 return false;
             }
             if !orchestrator_pane.is_empty() && w.orchestrator_pane == orchestrator_pane {
@@ -291,7 +288,7 @@ pub fn count_running_by_orchestrator(orchestrator_pane: &str, session_id: &str) 
 pub fn has_running_children(parent_name: &str) -> bool {
     load_workers()
         .values()
-        .any(|w| w.spawned_by == parent_name && matches!(w.status.as_str(), "running" | "blocked"))
+        .any(|w| w.spawned_by == parent_name && w.status.is_active())
 }
 
 /// Remove workers with status `done`, `dead`, or `destroyed`. Returns removed names.
