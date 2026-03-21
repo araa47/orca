@@ -13,6 +13,7 @@ use crate::tmux::{
     capture_pane, create_window, ensure_session, kill_pane, kill_window, pane_alive, send_keys,
     tmux, wait_for_running, window_exists,
 };
+use crate::types::{Backend, Orchestrator, WorkerStatus};
 use crate::worktree::{create_worktree, ensure_git_repo, remove_worktree};
 
 #[allow(dead_code)]
@@ -258,10 +259,11 @@ pub async fn spawn_worker(opts: SpawnOptions) -> Result<Worker, Box<dyn std::err
         } else {
             format!(" \u{2190} {}", opts.spawned_by)
         };
-        let orch_tag = if opts.orchestrator == "none" {
+        let orch_str = &opts.orchestrator;
+        let orch_tag = if orch_str == "none" {
             "solo"
         } else {
-            &opts.orchestrator
+            orch_str
         };
 
         let short_task = truncate_task(&opts.task, 60);
@@ -318,12 +320,15 @@ pub async fn spawn_worker(opts: SpawnOptions) -> Result<Worker, Box<dyn std::err
 
         let worker = Worker {
             name: worker_name.clone(),
-            backend: backend_key.to_string(),
+            backend: backend_key.parse::<Backend>().unwrap_or(Backend::Claude),
             task: opts.task.clone(),
             dir: project_dir_str.clone(),
             workdir: workdir.clone(),
             base_branch: opts.base_branch.clone(),
-            orchestrator: opts.orchestrator.clone(),
+            orchestrator: opts
+                .orchestrator
+                .parse::<Orchestrator>()
+                .unwrap_or(Orchestrator::None),
             orchestrator_pane: opts.orchestrator_pane.clone(),
             session_id: opts.session_id.clone(),
             reply_channel: opts.reply_channel.clone(),
@@ -333,7 +338,7 @@ pub async fn spawn_worker(opts: SpawnOptions) -> Result<Worker, Box<dyn std::err
             depth: opts.depth,
             spawned_by: opts.spawned_by.clone(),
             layout: "window".to_string(),
-            status: "running".to_string(),
+            status: WorkerStatus::Running,
             started_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
             last_event_at: String::new(),
             done_reported: false,

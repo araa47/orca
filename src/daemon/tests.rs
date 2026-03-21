@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::{Backend, Orchestrator, WorkerStatus};
 use std::sync::Once;
 
 static INIT: Once = Once::new();
@@ -82,12 +83,12 @@ fn make_test_worker(name: &str) -> Worker {
     Worker {
         name: name.into(),
         pane_id: String::new(),
-        backend: String::new(),
+        backend: Backend::Claude,
         task: String::new(),
         dir: String::new(),
         workdir: String::new(),
         base_branch: String::new(),
-        orchestrator: String::new(),
+        orchestrator: Orchestrator::None,
         orchestrator_pane: String::new(),
         session_id: String::new(),
         reply_channel: String::new(),
@@ -96,7 +97,7 @@ fn make_test_worker(name: &str) -> Worker {
         depth: 1,
         spawned_by: "root".into(),
         layout: String::new(),
-        status: String::new(),
+        status: WorkerStatus::Running,
         started_at: String::new(),
         last_event_at: String::new(),
         done_reported: false,
@@ -478,7 +479,7 @@ async fn test_check_workers_inner_done_reported() {
     let name = unique_name("cw_done");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
+    w.status = WorkerStatus::Running;
     w.done_reported = true;
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w);
@@ -491,7 +492,7 @@ async fn test_check_workers_inner_done_reported() {
     let updated = workers.get(&name);
     // Worker should be marked done (or absent if gc'd)
     if let Some(u) = updated {
-        assert_eq!(u.status, "done");
+        assert_eq!(u.status, WorkerStatus::Done);
     }
     // Tracking should be cleared
     assert!(!ds.idle_seen.contains_key(&name));
@@ -506,7 +507,7 @@ async fn test_check_workers_inner_process_exited_without_done() {
     let name = unique_name("cw_exited");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
+    w.status = WorkerStatus::Running;
     w.process_exited = true;
     w.done_reported = false;
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -517,7 +518,11 @@ async fn test_check_workers_inner_process_exited_without_done() {
 
     let workers = state::load_workers();
     if let Some(u) = workers.get(&name) {
-        assert_eq!(u.status, "dead", "expected 'dead' for exited without done");
+        assert_eq!(
+            u.status,
+            WorkerStatus::Dead,
+            "expected 'dead' for exited without done"
+        );
     }
 
     cleanup_worker(&name);
@@ -532,7 +537,7 @@ async fn test_check_workers_inner_process_exited_with_done_event() {
     events::append_event(&name, "done", "finished", "test").unwrap();
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
+    w.status = WorkerStatus::Running;
     w.process_exited = true;
     w.done_reported = false;
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -543,7 +548,11 @@ async fn test_check_workers_inner_process_exited_with_done_event() {
 
     let workers = state::load_workers();
     if let Some(u) = workers.get(&name) {
-        assert_eq!(u.status, "done", "expected 'done' when done event exists");
+        assert_eq!(
+            u.status,
+            WorkerStatus::Done,
+            "expected 'done' when done event exists"
+        );
     }
 
     cleanup_worker(&name);
@@ -556,7 +565,7 @@ async fn test_check_workers_inner_pane_died_no_done() {
     let name = unique_name("cw_paned");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
+    w.status = WorkerStatus::Running;
     w.pane_id = "%99999".into();
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w);
@@ -566,7 +575,11 @@ async fn test_check_workers_inner_pane_died_no_done() {
 
     let workers = state::load_workers();
     if let Some(u) = workers.get(&name) {
-        assert_eq!(u.status, "dead", "pane not alive should mark dead");
+        assert_eq!(
+            u.status,
+            WorkerStatus::Dead,
+            "pane not alive should mark dead"
+        );
     }
 
     cleanup_worker(&name);
@@ -581,7 +594,7 @@ async fn test_check_workers_inner_pane_died_with_done_event() {
     events::append_event(&name, "done", "finished", "test").unwrap();
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
+    w.status = WorkerStatus::Running;
     w.pane_id = "%99998".into();
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w);
@@ -591,7 +604,11 @@ async fn test_check_workers_inner_pane_died_with_done_event() {
 
     let workers = state::load_workers();
     if let Some(u) = workers.get(&name) {
-        assert_eq!(u.status, "done", "pane died + done event → done");
+        assert_eq!(
+            u.status,
+            WorkerStatus::Done,
+            "pane died + done event → done"
+        );
     }
 
     cleanup_worker(&name);
@@ -604,7 +621,7 @@ async fn test_check_workers_inner_skips_done_workers() {
     let name = unique_name("cw_skip");
 
     let mut w = make_test_worker(&name);
-    w.status = "done".into();
+    w.status = WorkerStatus::Done;
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w);
 
@@ -613,7 +630,7 @@ async fn test_check_workers_inner_skips_done_workers() {
 
     let workers = state::load_workers();
     let u = workers.get(&name).unwrap();
-    assert_eq!(u.status, "done", "done worker should stay done");
+    assert_eq!(u.status, WorkerStatus::Done, "done worker should stay done");
 
     cleanup_worker(&name);
 }
@@ -625,7 +642,7 @@ async fn test_check_workers_inner_skips_dead_workers() {
     let name = unique_name("cw_dead");
 
     let mut w = make_test_worker(&name);
-    w.status = "dead".into();
+    w.status = WorkerStatus::Dead;
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w);
 
@@ -634,7 +651,7 @@ async fn test_check_workers_inner_skips_dead_workers() {
 
     let workers = state::load_workers();
     let u = workers.get(&name).unwrap();
-    assert_eq!(u.status, "dead", "dead worker should stay dead");
+    assert_eq!(u.status, WorkerStatus::Dead, "dead worker should stay dead");
 
     cleanup_worker(&name);
 }
@@ -646,7 +663,7 @@ async fn test_check_workers_inner_blocked_worker_pane_died() {
     let name = unique_name("cw_blocked");
 
     let mut w = make_test_worker(&name);
-    w.status = "blocked".into();
+    w.status = WorkerStatus::Blocked;
     w.pane_id = "%99997".into();
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w);
@@ -656,7 +673,7 @@ async fn test_check_workers_inner_blocked_worker_pane_died() {
 
     let workers = state::load_workers();
     if let Some(u) = workers.get(&name) {
-        assert_eq!(u.status, "dead", "blocked + pane died → dead");
+        assert_eq!(u.status, WorkerStatus::Dead, "blocked + pane died → dead");
     }
 
     cleanup_worker(&name);
@@ -669,7 +686,7 @@ async fn test_check_workers_inner_prunes_stale_tracking() {
     let name = unique_name("cw_prune");
 
     let mut w = make_test_worker(&name);
-    w.status = "done".into();
+    w.status = WorkerStatus::Done;
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w);
 
@@ -742,19 +759,19 @@ async fn test_check_workers_inner_multiple_workers() {
     let name3 = unique_name("cw_multi3");
 
     let mut w1 = make_test_worker(&name1);
-    w1.status = "running".into();
+    w1.status = WorkerStatus::Running;
     w1.done_reported = true;
     w1.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w1);
 
     let mut w2 = make_test_worker(&name2);
-    w2.status = "running".into();
+    w2.status = WorkerStatus::Running;
     w2.process_exited = true;
     w2.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w2);
 
     let mut w3 = make_test_worker(&name3);
-    w3.status = "done".into();
+    w3.status = WorkerStatus::Done;
     w3.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w3);
 
@@ -763,13 +780,13 @@ async fn test_check_workers_inner_multiple_workers() {
 
     let workers = state::load_workers();
     if let Some(u1) = workers.get(&name1) {
-        assert_eq!(u1.status, "done");
+        assert_eq!(u1.status, WorkerStatus::Done);
     }
     if let Some(u2) = workers.get(&name2) {
-        assert_eq!(u2.status, "dead");
+        assert_eq!(u2.status, WorkerStatus::Dead);
     }
     let u3 = workers.get(&name3).unwrap();
-    assert_eq!(u3.status, "done");
+    assert_eq!(u3.status, WorkerStatus::Done);
 
     cleanup_worker(&name1);
     cleanup_worker(&name2);
@@ -786,7 +803,7 @@ async fn test_check_stuck_empty_output_returns_early() {
     let _ = config::ensure_home();
     let name = "cs_empty";
     let mut w = make_test_worker(name);
-    w.status = "running".into();
+    w.status = WorkerStatus::Running;
     w.pane_id = "%99996".into();
     let workers = HashMap::new();
     let mut ds = DaemonState::new();
@@ -808,7 +825,7 @@ async fn test_check_stuck_recent_events_clears_idle() {
     events::append_event(&name, "heartbeat", "", "test").unwrap();
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
+    w.status = WorkerStatus::Running;
     w.last_event_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     w.pane_id = "%99995".into();
 
@@ -837,7 +854,7 @@ async fn test_check_workers_via_mutex() {
     let name = unique_name("cw_mutex");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
+    w.status = WorkerStatus::Running;
     w.done_reported = true;
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w);
@@ -847,7 +864,7 @@ async fn test_check_workers_via_mutex() {
 
     let workers = state::load_workers();
     if let Some(u) = workers.get(&name) {
-        assert_eq!(u.status, "done");
+        assert_eq!(u.status, WorkerStatus::Done);
     }
 
     cleanup_worker(&name);
@@ -860,7 +877,7 @@ async fn test_check_workers_arc_wrapper() {
     let name = unique_name("cw_arc");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
+    w.status = WorkerStatus::Running;
     w.done_reported = true;
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w);
@@ -870,7 +887,7 @@ async fn test_check_workers_arc_wrapper() {
 
     let workers = state::load_workers();
     if let Some(u) = workers.get(&name) {
-        assert_eq!(u.status, "done");
+        assert_eq!(u.status, WorkerStatus::Done);
     }
 
     cleanup_worker(&name);
@@ -1024,8 +1041,8 @@ async fn test_check_stuck_worker_too_young_clears_idle() {
 
     // Worker just started (age < IDLE_MIN_LIFETIME)
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
-    w.backend = "claude".into();
+    w.status = WorkerStatus::Running;
+    w.backend = Backend::Claude;
     w.pane_id = "%99994".into();
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     // No recent events → watchdog mode
@@ -1057,8 +1074,8 @@ async fn test_check_stuck_has_running_children() {
     let child_name = unique_name("cs_child");
 
     let mut parent = make_test_worker(&parent_name);
-    parent.status = "running".into();
-    parent.backend = "claude".into();
+    parent.status = WorkerStatus::Running;
+    parent.backend = Backend::Claude;
     parent.pane_id = "%99993".into();
     parent.started_at = chrono::Utc::now()
         .checked_sub_signed(chrono::Duration::seconds(120))
@@ -1068,7 +1085,7 @@ async fn test_check_stuck_has_running_children() {
     parent.last_event_at = String::new();
 
     let mut child = make_test_worker(&child_name);
-    child.status = "running".into();
+    child.status = WorkerStatus::Running;
     child.spawned_by = parent_name.clone();
 
     let mut workers = HashMap::new();
@@ -1090,8 +1107,8 @@ async fn test_check_stuck_children_finished_grace() {
     let name = unique_name("cs_grace");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
-    w.backend = "claude".into();
+    w.status = WorkerStatus::Running;
+    w.backend = Backend::Claude;
     w.pane_id = "%99992".into();
     w.started_at = chrono::Utc::now()
         .checked_sub_signed(chrono::Duration::seconds(120))
@@ -1119,8 +1136,8 @@ async fn test_check_stuck_idle_first_seen() {
     let name = unique_name("cs_firstseen");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
-    w.backend = "claude".into();
+    w.status = WorkerStatus::Running;
+    w.backend = Backend::Claude;
     w.pane_id = "%99991".into();
     w.started_at = chrono::Utc::now()
         .checked_sub_signed(chrono::Duration::seconds(120))
@@ -1149,8 +1166,8 @@ async fn test_check_stuck_idle_output_hash_changed() {
     let name = unique_name("cs_hashchg");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
-    w.backend = "claude".into();
+    w.status = WorkerStatus::Running;
+    w.backend = Backend::Claude;
     w.pane_id = "%99990".into();
     w.started_at = chrono::Utc::now()
         .checked_sub_signed(chrono::Duration::seconds(120))
@@ -1180,8 +1197,8 @@ async fn test_check_stuck_idle_confirmed_done_reported() {
     let name = unique_name("cs_idledone");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
-    w.backend = "claude".into();
+    w.status = WorkerStatus::Running;
+    w.backend = Backend::Claude;
     w.pane_id = "%99989".into();
     w.done_reported = true;
     w.started_at = chrono::Utc::now()
@@ -1210,8 +1227,8 @@ async fn test_check_stuck_idle_confirmed_warn_cooldown() {
     let name = unique_name("cs_idlewarn");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
-    w.backend = "claude".into();
+    w.status = WorkerStatus::Running;
+    w.backend = Backend::Claude;
     w.pane_id = "%99988".into();
     w.done_reported = false;
     w.started_at = chrono::Utc::now()
@@ -1304,7 +1321,7 @@ async fn test_check_workers_inner_blocked_worker_with_done_event_pane_died() {
     events::append_event(&name, "done", "finished", "test").unwrap();
 
     let mut w = make_test_worker(&name);
-    w.status = "blocked".into();
+    w.status = WorkerStatus::Blocked;
     w.pane_id = "%99986".into();
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w);
@@ -1314,7 +1331,11 @@ async fn test_check_workers_inner_blocked_worker_with_done_event_pane_died() {
 
     let workers = state::load_workers();
     if let Some(u) = workers.get(&name) {
-        assert_eq!(u.status, "done", "blocked + pane died + done event → done");
+        assert_eq!(
+            u.status,
+            WorkerStatus::Done,
+            "blocked + pane died + done event → done"
+        );
     }
 
     cleanup_worker(&name);
@@ -1331,7 +1352,7 @@ async fn test_check_workers_inner_process_exited_with_done_reported() {
     let name = unique_name("cw_exit_done_rpt");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
+    w.status = WorkerStatus::Running;
     w.process_exited = true;
     w.done_reported = true;
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -1343,7 +1364,7 @@ async fn test_check_workers_inner_process_exited_with_done_reported() {
     let workers = state::load_workers();
     if let Some(u) = workers.get(&name) {
         // done_reported is checked first in check_workers_inner
-        assert_eq!(u.status, "done");
+        assert_eq!(u.status, WorkerStatus::Done);
     }
 
     cleanup_worker(&name);
@@ -1384,7 +1405,7 @@ async fn test_check_workers_inner_empty_pane_id_uses_window() {
     let name = unique_name("cw_nopane");
 
     let mut w = make_test_worker(&name);
-    w.status = "running".into();
+    w.status = WorkerStatus::Running;
     w.pane_id = String::new(); // empty → falls back to window_exists
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     save_test_worker(&w);
@@ -1394,7 +1415,7 @@ async fn test_check_workers_inner_empty_pane_id_uses_window() {
 
     let workers = state::load_workers();
     if let Some(u) = workers.get(&name) {
-        assert_eq!(u.status, "dead", "no window → dead");
+        assert_eq!(u.status, WorkerStatus::Dead, "no window → dead");
     }
 
     cleanup_worker(&name);

@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::{Backend, Orchestrator, WorkerStatus};
 
 fn setup_spawn_env(tmp_home: &tempfile::TempDir) {
     unsafe {
@@ -416,12 +417,12 @@ async fn spawn_worker_duplicate_name_in_state() {
     // Pre-save a worker with the target name
     let existing = crate::state::Worker {
         name: "dup-name".into(),
-        backend: "claude".into(),
+        backend: Backend::Claude,
         task: "old task".into(),
         dir: dir.clone(),
         workdir: dir.clone(),
         base_branch: "main".into(),
-        orchestrator: "none".into(),
+        orchestrator: Orchestrator::None,
         orchestrator_pane: String::new(),
         session_id: String::new(),
         reply_channel: String::new(),
@@ -431,7 +432,7 @@ async fn spawn_worker_duplicate_name_in_state() {
         depth: 0,
         spawned_by: String::new(),
         layout: "window".into(),
-        status: "running".into(),
+        status: WorkerStatus::Running,
         started_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
         last_event_at: String::new(),
         done_reported: false,

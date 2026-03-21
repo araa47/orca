@@ -438,12 +438,12 @@ fn make_test_worker(name: &str) -> Worker {
     Worker {
         name: name.into(),
         pane_id: String::new(),
-        backend: String::new(),
+        backend: Backend::Claude,
         task: String::new(),
         dir: String::new(),
         workdir: String::new(),
         base_branch: String::new(),
-        orchestrator: String::new(),
+        orchestrator: Orchestrator::None,
         orchestrator_pane: String::new(),
         session_id: String::new(),
         reply_channel: String::new(),
@@ -452,7 +452,7 @@ fn make_test_worker(name: &str) -> Worker {
         depth: 0,
         spawned_by: String::new(),
         layout: String::new(),
-        status: String::new(),
+        status: WorkerStatus::Running,
         started_at: String::new(),
         last_event_at: String::new(),
         done_reported: false,
@@ -627,8 +627,10 @@ fn test_hook_orca_sh_contains_orca() {
 
 fn make_worker_with(name: &str, backend: &str, status: &str, depth: u32) -> Worker {
     let mut w = make_test_worker(name);
-    w.backend = backend.into();
-    w.status = status.into();
+    w.backend = backend.parse::<Backend>().unwrap_or(Backend::Claude);
+    w.status = status
+        .parse::<WorkerStatus>()
+        .unwrap_or(WorkerStatus::Running);
     w.depth = depth;
     w.started_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     w.task = format!("task for {name}");
@@ -1379,9 +1381,9 @@ fn test_ensure_l0_openclaw_creates_entry_in_memory() {
     // Verify the L0 entry has correct fields
     let l0 = &workers["openclaw"];
     assert_eq!(l0.depth, 0);
-    assert_eq!(l0.backend, "openclaw");
+    assert_eq!(l0.backend, Backend::Openclaw);
     assert!(l0.spawned_by.is_empty());
-    assert_eq!(l0.status, "running");
+    assert_eq!(l0.status, WorkerStatus::Running);
 }
 
 #[test]
@@ -1408,11 +1410,11 @@ fn test_ensure_l0_openclaw_skips_when_exists() {
 fn test_make_l0_worker_fields() {
     let w = make_l0_worker("test-l0", "claude", "%5", "/proj", "sid", "main");
     assert_eq!(w.name, "test-l0");
-    assert_eq!(w.backend, "claude");
+    assert_eq!(w.backend, Backend::Claude);
     assert_eq!(w.pane_id, "%5");
     assert_eq!(w.depth, 0);
     assert!(w.spawned_by.is_empty());
-    assert_eq!(w.status, "running");
+    assert_eq!(w.status, WorkerStatus::Running);
     assert_eq!(w.dir, "/proj");
 }
 
@@ -1661,7 +1663,7 @@ fn test_gc_skips_l0_entries() {
     let mut workers = HashMap::new();
     // L0 entry with done status (shouldn't be GC'd)
     let mut l0 = make_l0_worker("openclaw", "openclaw", "", "/proj", "", "main");
-    l0.status = "done".to_string();
+    l0.status = WorkerStatus::Done;
     workers.insert("openclaw".to_string(), l0);
     // Done regular worker (should be GC'd)
     let w = make_worker_with("ace", "claude", "done", 1);
@@ -1674,7 +1676,7 @@ fn test_gc_skips_l0_entries() {
             if w.depth == 0 && w.spawned_by.is_empty() {
                 return false;
             }
-            matches!(w.status.as_str(), "done" | "dead" | "destroyed")
+            w.status.is_terminal()
         })
         .collect();
     assert_eq!(to_gc.len(), 1);

@@ -7,6 +7,7 @@ mod prompts;
 mod spawn;
 mod state;
 mod tmux;
+mod types;
 mod wake;
 mod worktree;
 

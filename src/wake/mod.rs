@@ -1,8 +1,8 @@
 //! Orchestrator wake-up strategies.
 
-use crate::config::canonical_backend;
 use crate::state::{Worker, get_worker};
 use crate::tmux::{run_out, send_keys};
+use crate::types::{Backend, Orchestrator};
 
 fn routing_block(worker: &Worker) -> String {
     if worker.reply_channel.is_empty() {
@@ -102,33 +102,33 @@ fn resolve_delivery_target(worker: &Worker) -> String {
 }
 
 async fn deliver(worker: &Worker, msg: &str) {
-    let raw_orch = &worker.orchestrator;
-    if raw_orch == "none" || raw_orch.is_empty() {
+    let orch = &worker.orchestrator;
+    if *orch == Orchestrator::None {
         return;
     }
 
-    let orch = if raw_orch != "openclaw" {
-        canonical_backend(raw_orch).to_string()
-    } else {
-        raw_orch.clone()
-    };
-
-    match orch.as_str() {
-        "claude" | "codex" | "cursor" => {
+    match orch {
+        Orchestrator::Backend(Backend::Claude)
+        | Orchestrator::Backend(Backend::Codex)
+        | Orchestrator::Backend(Backend::Cursor) => {
             let target = resolve_delivery_target(worker);
             if target.is_empty() {
                 return;
             }
-            let repeats = if orch == "cursor" { 3 } else { 1 };
+            let repeats = if *orch == Orchestrator::Backend(Backend::Cursor) {
+                3
+            } else {
+                1
+            };
             send_keys(&target, msg, true, true, 150, repeats).await;
         }
-        "openclaw" => {
+        Orchestrator::Backend(Backend::Openclaw) => {
             if !worker.spawned_by.is_empty() {
                 let target = resolve_delivery_target(worker);
                 if !target.is_empty() {
                     let mut repeats = 1;
                     if let Some(parent) = get_worker(&worker.spawned_by)
-                        && canonical_backend(&parent.backend) == "cursor"
+                        && parent.backend == Backend::Cursor
                     {
                         repeats = 3;
                     }
@@ -144,7 +144,7 @@ async fn deliver(worker: &Worker, msg: &str) {
                 eprintln!("openclaw system event failed: {}", stderr.trim());
             }
         }
-        _ => {}
+        Orchestrator::None => {}
     }
 }
 
