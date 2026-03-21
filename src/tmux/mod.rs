@@ -14,14 +14,26 @@ use crate::prompts::{detect_prompt, handle_simple_prompt};
 // Low-level helpers
 // ---------------------------------------------------------------------------
 
+/// A stable directory for subprocess cwd.
+///
+/// The daemon may inherit a cwd pointing to a deleted worktree; subprocesses
+/// (especially Node.js-based tools like `openclaw`) crash if their cwd is gone.
+/// We use `$HOME` as a safe fallback.
+fn stable_cwd() -> std::path::PathBuf {
+    dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"))
+}
+
 /// Run a command and return (exit_code, stdout, stderr).
 ///
 /// Applies a 10-second timeout so that a hung subprocess (e.g. tmux
 /// connecting to a stale socket) cannot block the caller forever.
+/// Always sets cwd to a stable directory so subprocesses don't crash
+/// when the inherited cwd has been deleted (e.g. a removed worktree).
 pub(crate) async fn run_out(cmd: &[&str]) -> (i32, String, String) {
     let (program, args) = cmd.split_first().expect("cmd must not be empty");
     let child = match Command::new(program)
         .args(args)
+        .current_dir(stable_cwd())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
@@ -108,7 +120,10 @@ pub fn detect_current_pane() -> String {
         args.push(a.as_str());
     }
     args.extend(["display-message", "-p", "#{pane_id}"]);
-    let result = std::process::Command::new("tmux").args(&args).output();
+    let result = std::process::Command::new("tmux")
+        .args(&args)
+        .current_dir(stable_cwd())
+        .output();
     match result {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => String::new(),

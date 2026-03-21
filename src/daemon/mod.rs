@@ -661,6 +661,14 @@ pub fn start_daemon_background() -> u32 {
 
         // Grandchild: the actual daemon
 
+        // Change to a stable directory so subprocesses don't crash
+        // when the inherited cwd is a worktree that gets deleted later.
+        if let Some(home) = dirs::home_dir()
+            && let Ok(home_c) = std::ffi::CString::new(home.to_string_lossy().as_ref())
+        {
+            libc::chdir(home_c.as_ptr());
+        }
+
         // Close inherited FDs
         let max_fd = libc::sysconf(libc::_SC_OPEN_MAX);
         let max_fd = if max_fd <= 0 { 1024 } else { max_fd.min(8192) };

@@ -1203,6 +1203,13 @@ fn cmd_killall(mut pane: String, session_id: String, mine: bool, force: bool, no
         let _ = state::remove_worker(wname);
         println!("Killed: {wname}");
     }
+
+    // Clean up L0 orchestrator entries that have no remaining children.
+    let orphaned_l0 = gc_orphaned_l0();
+    for l0_name in &orphaned_l0 {
+        println!("Removed orphaned L0: {l0_name}");
+    }
+
     let scope = if force {
         "force".to_string()
     } else if mine {
@@ -1283,6 +1290,12 @@ fn cmd_gc(mut pane: String, session_id: String, mine: bool, force: bool, no_stas
         removed.extend(extra);
     }
 
+    // Clean up L0 orchestrator entries that have no remaining children.
+    let orphaned_l0 = gc_orphaned_l0();
+    if !orphaned_l0.is_empty() {
+        removed.extend(orphaned_l0);
+    }
+
     if !removed.is_empty() {
         let scope = if force {
             "force".to_string()
@@ -1298,6 +1311,26 @@ fn cmd_gc(mut pane: String, session_id: String, mine: bool, force: bool, no_stas
     } else {
         println!("Nothing to clean.");
     }
+}
+
+/// Remove L0 orchestrator entries that have no remaining children in state.
+/// Returns the names of removed L0 entries.
+fn gc_orphaned_l0() -> Vec<String> {
+    let workers = state::load_workers();
+    let children_of: HashSet<&str> = workers
+        .values()
+        .filter(|w| !(w.depth == 0 && w.spawned_by.is_empty()))
+        .map(|w| w.spawned_by.as_str())
+        .collect();
+
+    let mut removed = Vec::new();
+    for (name, w) in &workers {
+        if w.depth == 0 && w.spawned_by.is_empty() && !children_of.contains(name.as_str()) {
+            let _ = state::remove_worker(name);
+            removed.push(name.clone());
+        }
+    }
+    removed
 }
 
 // ---------------------------------------------------------------------------
