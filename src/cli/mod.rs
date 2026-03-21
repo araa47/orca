@@ -1182,8 +1182,12 @@ fn cmd_killall(mut pane: String, session_id: String, mine: bool, force: bool, no
         return;
     }
 
+    // Sort deepest-first so child worktrees are removed before parents
+    let mut sorted: Vec<(String, Worker)> = killable.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.depth.cmp(&a.1.depth));
+
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    for (wname, w) in &killable {
+    for (wname, w) in &sorted {
         rt.block_on(async {
             if !w.pane_id.is_empty() && tmux::pane_alive(&w.pane_id).await {
                 tmux::kill_pane(&w.pane_id).await;
@@ -1200,7 +1204,7 @@ fn cmd_killall(mut pane: String, session_id: String, mine: bool, force: bool, no
         });
     }
 
-    let killed_names: Vec<String> = killable.keys().cloned().collect();
+    let killed_names: Vec<String> = sorted.iter().map(|(n, _)| n.clone()).collect();
     for wname in &killed_names {
         let _ = state::remove_worker(wname);
         println!("Killed: {wname}");
@@ -1247,7 +1251,7 @@ fn cmd_gc(mut pane: String, session_id: String, mine: bool, force: bool, no_stas
     } else {
         filter_workers_by_scope(&all_workers, &pane, &session_id)
     };
-    let to_gc: Vec<(String, Worker)> = scoped
+    let mut to_gc: Vec<(String, Worker)> = scoped
         .into_iter()
         .filter(|(_, w)| {
             // Skip L0 orchestrator entries — they are bookkeeping, not GC-able
@@ -1257,6 +1261,8 @@ fn cmd_gc(mut pane: String, session_id: String, mine: bool, force: bool, no_stas
             w.status.is_terminal()
         })
         .collect();
+    // Sort deepest-first so child worktrees are removed before parents
+    to_gc.sort_by(|a, b| b.1.depth.cmp(&a.1.depth));
 
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     for (name, w) in &to_gc {
