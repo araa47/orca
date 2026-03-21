@@ -632,7 +632,8 @@ pub fn start_daemon_background() -> u32 {
     unsafe {
         let pid = libc::fork();
         if pid < 0 {
-            panic!("fork() failed");
+            eprintln!("orca: fork() failed");
+            return 0;
         }
         if pid > 0 {
             // Reap the intermediate child (it exits immediately after double-fork)
