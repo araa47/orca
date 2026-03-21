@@ -233,16 +233,17 @@ Full command reference lives in [`skills/orca/SKILL.md`](skills/orca/SKILL.md) â
 
 ## Development
 
+If you have [direnv](https://direnv.net/) installed, run `direnv allow` â€” it installs rustup, rustfmt, clippy, and cargo-nextest automatically. Otherwise see [CONTRIBUTING.md](CONTRIBUTING.md) for manual setup.
+
 ```bash
-cargo install cargo-nextest --locked   # one-time; same test runner as CI
-cargo build                            # debug build
-cargo nextest run                      # run tests in parallel (preferred)
-cargo test                             # run tests without nextest
-cargo fmt                              # format code
-cargo clippy                           # lint
+cargo build              # debug build
+cargo nextest run        # run tests in parallel (preferred)
+cargo test               # run tests without nextest
+cargo fmt                # format code
+cargo clippy             # lint
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 
 ---
 
