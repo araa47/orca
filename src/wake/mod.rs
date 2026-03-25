@@ -1,8 +1,18 @@
 //! Orchestrator wake-up strategies.
 
+use crate::config;
 use crate::state::{Worker, get_worker};
 use crate::tmux::{run_out, send_keys};
 use crate::types::{Backend, Orchestrator};
+
+/// Expand placeholders in a gateway command template.
+fn expand_template(tmpl: &str, text: &str, worker: &Worker) -> String {
+    tmpl.replace("{text}", text)
+        .replace("{worker}", &worker.name)
+        .replace("{channel}", &worker.reply_channel)
+        .replace("{target}", &worker.reply_to)
+        .replace("{thread}", &worker.reply_thread)
+}
 
 fn routing_block(worker: &Worker) -> String {
     if worker.reply_channel.is_empty() {
@@ -17,6 +27,24 @@ fn routing_block(worker: &Worker) -> String {
     }
     let routing = parts.join("\n");
 
+    // For custom gateways with a reply template, show the resolved command
+    if let Orchestrator::Custom(name) = &worker.orchestrator
+        && let Some(gw) = config::gateway(name)
+        && let Some(tmpl) = &gw.reply
+    {
+        let cmd_str = expand_template(tmpl, "<summary>", worker);
+        return format!(
+            "\n\nRouting:\n{routing}\n\n\
+             ACTION REQUIRED:\n\
+             1. Review the output with: orca logs {wname}\n\
+             2. Summarize the output (include any PR links).\n\
+             3. Send the summary via: {cmd_str}\n\
+             4. Do NOT reply in-session — the user won't see it.",
+            wname = worker.name,
+        );
+    }
+
+    // Default: openclaw message send
     let mut cmd_parts = vec![
         "openclaw".to_string(),
         "message".to_string(),
@@ -142,6 +170,39 @@ async fn deliver(worker: &Worker, msg: &str) {
             .await;
             if rc != 0 {
                 eprintln!("openclaw system event failed: {}", stderr.trim());
+            }
+        }
+        Orchestrator::Custom(name) => {
+            // If spawned by a known parent, try send_keys first (like openclaw sub-workers)
+            if !worker.spawned_by.is_empty() {
+                let target = resolve_delivery_target(worker);
+                if !target.is_empty() {
+                    let mut repeats = 1;
+                    if let Some(parent) = get_worker(&worker.spawned_by)
+                        && parent.backend == Backend::Cursor
+                    {
+                        repeats = 3;
+                    }
+                    send_keys(&target, msg, true, true, 150, repeats).await;
+                    return;
+                }
+            }
+            // Fall back to gateway command template
+            if let Some(gw) = config::gateway(name) {
+                let template = if !worker.reply_channel.is_empty() {
+                    gw.reply.as_deref().or(gw.wake.as_deref())
+                } else {
+                    gw.wake.as_deref()
+                };
+                if let Some(tmpl) = template {
+                    let cmd = expand_template(tmpl, msg, worker);
+                    let (rc, _, stderr) = run_out(&["sh", "-c", &cmd]).await;
+                    if rc != 0 {
+                        eprintln!("{name} gateway failed: {}", stderr.trim());
+                    }
+                }
+            } else {
+                eprintln!("No gateway config for custom orchestrator '{name}'");
             }
         }
         Orchestrator::None => {}

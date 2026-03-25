@@ -1,0 +1,41 @@
+---
+# Orca configuration — place at ~/.orca/config.yaml (or $ORCA_HOME/config.yaml)
+#
+# All settings are optional. Env vars (ORCA_MAX_DEPTH, etc.) override YAML values.
+
+# watchdog_quiet_secs: 120   # seconds before daemon considers a silent worker stalled
+# max_depth: 3               # maximum nesting depth for sub-workers
+# max_workers: 10            # maximum running workers per orchestrator
+
+# Custom orchestrator gateways
+#
+# Define shell command templates for agents not built into Orca.
+# Use --orchestrator <name> when spawning workers to route notifications
+# through the gateway.
+#
+# Placeholders available in templates:
+#   {text}    — the notification message
+#   {worker}  — the worker name
+#   {channel} — reply channel (from --reply-channel)
+#   {target}  — reply target (from --reply-to)
+#   {thread}  — thread ID (from --reply-thread)
+#
+# Each gateway can define:
+#   wake:  — command for completion / stuck / warning notifications
+#   reply: — command for routed replies (when --reply-channel is set)
+#           If reply is defined, --reply-channel is required at spawn time.
+
+gateways:
+  # Hermes agent over Matrix
+    hermes:
+        wake: hermes chat -q "{text}"
+        reply: 'hermes chat -q "Use the send_message tool to send this exact text to matrix channel {channel}: {text}"'
+
+  # Example: simple webhook notification (wake only, no reply routing)
+  # webhook:
+  #   wake: 'curl -s -X POST https://example.com/notify -d "msg={text}&worker={worker}"'
+
+  # Example: custom bot with full routing
+  # mybot:
+  #   wake: 'mybot notify --msg "{text}"'
+  #   reply: 'mybot send --channel {channel} --to {target} --thread {thread} --msg "{text}"'

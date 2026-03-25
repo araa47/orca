@@ -1,6 +1,6 @@
 [package]
 name = "orca"
-version = "0.0.9"
+version = "0.0.10"
 edition = "2024"
 description = "Orca — simple agent orchestrator"
 
@@ -21,6 +21,7 @@ which = "7"
 dirs = "6"
 libc = "0.2"
 md5 = "0.7"
+serde_yaml = "0.9"
 scopeguard = "1"
 
 [dev-dependencies]

@@ -386,3 +386,95 @@ fn resolve_delivery_target_spawned_by_empty_still_uses_orchestrator() {
     let target = resolve_delivery_target(&w);
     assert_eq!(target, "%5");
 }
+
+// --- expand_template tests ---
+
+#[test]
+fn expand_template_replaces_all_placeholders() {
+    let mut w = make_worker("alpha", "claude");
+    w.reply_channel = "general".to_string();
+    w.reply_to = "U123".to_string();
+    w.reply_thread = "T456".to_string();
+    let result = expand_template(
+        "send --channel {channel} --to {target} --thread {thread} --worker {worker} --msg \"{text}\"",
+        "hello world",
+        &w,
+    );
+    assert!(result.contains("--channel general"));
+    assert!(result.contains("--to U123"));
+    assert!(result.contains("--thread T456"));
+    assert!(result.contains("--worker alpha"));
+    assert!(result.contains("--msg \"hello world\""));
+}
+
+#[test]
+fn expand_template_empty_placeholders() {
+    let w = make_worker("beta", "claude");
+    let result = expand_template("cmd {channel} {target} {thread}", "msg", &w);
+    assert_eq!(result, "cmd   ");
+}
+
+#[test]
+fn expand_template_no_placeholders() {
+    let w = make_worker("gamma", "claude");
+    let result = expand_template("echo done", "msg", &w);
+    assert_eq!(result, "echo done");
+}
+
+// --- custom orchestrator tests ---
+
+#[test]
+fn wake_message_custom_orchestrator() {
+    let mut w = make_worker("h1", "claude");
+    w.orchestrator = Orchestrator::Custom("hermes".into());
+    let msg = wake_message(&w);
+    assert!(msg.contains("h1"));
+    assert!(msg.contains("finished"));
+}
+
+#[tokio::test]
+async fn deliver_custom_no_gateway_config() {
+    // Custom orchestrator with no config.yaml entry — prints error but doesn't panic
+    let mut w = make_worker("cust1", "claude");
+    w.orchestrator = Orchestrator::Custom("nonexistent_gw".into());
+    w.orchestrator_pane = String::new();
+    w.spawned_by = String::new();
+    deliver(&w, "test message").await;
+}
+
+#[tokio::test]
+async fn deliver_custom_with_spawned_by_no_parent() {
+    let mut w = make_worker("cust2", "claude");
+    w.orchestrator = Orchestrator::Custom("hermes".into());
+    w.spawned_by = "nonexistent_parent".to_string();
+    w.orchestrator_pane = String::new();
+    // Parent doesn't exist — falls through to gateway command (which also doesn't exist in test)
+    deliver(&w, "test message").await;
+}
+
+#[tokio::test]
+async fn wake_orchestrator_custom() {
+    let mut w = make_worker("cust3", "claude");
+    w.orchestrator = Orchestrator::Custom("hermes".into());
+    w.orchestrator_pane = String::new();
+    w.spawned_by = String::new();
+    wake_orchestrator(&w).await;
+}
+
+#[tokio::test]
+async fn notify_stuck_custom() {
+    let mut w = make_worker("cust4", "claude");
+    w.orchestrator = Orchestrator::Custom("hermes".into());
+    w.orchestrator_pane = String::new();
+    w.spawned_by = String::new();
+    notify_stuck(&w, "blocked", "snippet").await;
+}
+
+#[tokio::test]
+async fn warn_orchestrator_custom() {
+    let mut w = make_worker("cust5", "claude");
+    w.orchestrator = Orchestrator::Custom("hermes".into());
+    w.orchestrator_pane = String::new();
+    w.spawned_by = String::new();
+    warn_orchestrator(&w, "stalled").await;
+}

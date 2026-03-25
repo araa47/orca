@@ -94,6 +94,7 @@ impl<'de> Deserialize<'de> for Backend {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Orchestrator {
     Backend(Backend),
+    Custom(String),
     None,
 }
 
@@ -103,7 +104,22 @@ impl Orchestrator {
     pub fn as_backend(&self) -> Option<&Backend> {
         match self {
             Orchestrator::Backend(b) => Some(b),
-            Orchestrator::None => None,
+            Orchestrator::Custom(_) | Orchestrator::None => None,
+        }
+    }
+
+    /// True if this is a custom (user-defined gateway) orchestrator.
+    #[allow(dead_code)]
+    pub fn is_custom(&self) -> bool {
+        matches!(self, Orchestrator::Custom(_))
+    }
+
+    /// Return the custom gateway name, if any.
+    #[allow(dead_code)]
+    pub fn custom_name(&self) -> Option<&str> {
+        match self {
+            Orchestrator::Custom(name) => Some(name),
+            _ => None,
         }
     }
 }
@@ -112,6 +128,7 @@ impl fmt::Display for Orchestrator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Orchestrator::Backend(b) => b.fmt(f),
+            Orchestrator::Custom(name) => f.write_str(name),
             Orchestrator::None => f.write_str("none"),
         }
     }
@@ -133,12 +150,15 @@ impl std::str::FromStr for Orchestrator {
     type Err = ParseOrchestratorError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Err(ParseOrchestratorError(s.to_string()));
+        }
         if s == "none" {
             return Ok(Orchestrator::None);
         }
         match s.parse::<Backend>() {
             Ok(b) => Ok(Orchestrator::Backend(b)),
-            Err(_) => Err(ParseOrchestratorError(s.to_string())),
+            Err(_) => Ok(Orchestrator::Custom(s.to_string())),
         }
     }
 }
@@ -332,6 +352,7 @@ mod tests {
     fn orchestrator_display() {
         assert_eq!(Orchestrator::None.to_string(), "none");
         assert_eq!(Orchestrator::Backend(Backend::Claude).to_string(), "claude");
+        assert_eq!(Orchestrator::Custom("hermes".into()).to_string(), "hermes");
     }
 
     #[test]
@@ -349,7 +370,17 @@ mod tests {
             "openclaw".parse::<Orchestrator>().unwrap(),
             Orchestrator::Backend(Backend::Openclaw)
         );
-        assert!("typo".parse::<Orchestrator>().is_err());
+        // Unknown names become Custom
+        assert_eq!(
+            "hermes".parse::<Orchestrator>().unwrap(),
+            Orchestrator::Custom("hermes".into())
+        );
+        assert_eq!(
+            "mybot".parse::<Orchestrator>().unwrap(),
+            Orchestrator::Custom("mybot".into())
+        );
+        // Empty string is an error
+        assert!("".parse::<Orchestrator>().is_err());
     }
 
     #[test]
@@ -359,6 +390,24 @@ mod tests {
             Some(&Backend::Codex)
         );
         assert_eq!(Orchestrator::None.as_backend(), None);
+        assert_eq!(Orchestrator::Custom("hermes".into()).as_backend(), None);
+    }
+
+    #[test]
+    fn orchestrator_is_custom() {
+        assert!(Orchestrator::Custom("hermes".into()).is_custom());
+        assert!(!Orchestrator::None.is_custom());
+        assert!(!Orchestrator::Backend(Backend::Claude).is_custom());
+    }
+
+    #[test]
+    fn orchestrator_custom_name() {
+        assert_eq!(
+            Orchestrator::Custom("hermes".into()).custom_name(),
+            Some("hermes")
+        );
+        assert_eq!(Orchestrator::None.custom_name(), None);
+        assert_eq!(Orchestrator::Backend(Backend::Claude).custom_name(), None);
     }
 
     #[test]
@@ -367,6 +416,7 @@ mod tests {
             Orchestrator::None,
             Orchestrator::Backend(Backend::Claude),
             Orchestrator::Backend(Backend::Openclaw),
+            Orchestrator::Custom("hermes".into()),
         ] {
             let json = serde_json::to_string(&o).unwrap();
             let parsed: Orchestrator = serde_json::from_str(&json).unwrap();
@@ -378,6 +428,12 @@ mod tests {
     fn orchestrator_deserialize_alias() {
         let o: Orchestrator = serde_json::from_str("\"cx\"").unwrap();
         assert_eq!(o, Orchestrator::Backend(Backend::Codex));
+    }
+
+    #[test]
+    fn orchestrator_deserialize_custom() {
+        let o: Orchestrator = serde_json::from_str("\"hermes\"").unwrap();
+        assert_eq!(o, Orchestrator::Custom("hermes".into()));
     }
 
     // --- WorkerStatus ---

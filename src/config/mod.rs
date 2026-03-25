@@ -1,10 +1,67 @@
 //! Paths, defaults, and env-overridable config.
+//!
+//! Settings are resolved in order: **env var > config.yaml > hardcoded default**.
 
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
+
+// ---------------------------------------------------------------------------
+// YAML config structs
+// ---------------------------------------------------------------------------
+
+/// A user-defined gateway for custom orchestrators.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct GatewayConfig {
+    /// Shell command template for wake/stuck/warn notifications.
+    /// Placeholders: `{text}`, `{worker}`, `{channel}`, `{target}`, `{thread}`
+    pub wake: Option<String>,
+    /// Shell command template for reply-routed messages (when reply_channel is set).
+    /// Placeholders: `{text}`, `{worker}`, `{channel}`, `{target}`, `{thread}`
+    pub reply: Option<String>,
+}
+
+impl GatewayConfig {
+    /// True if this gateway defines a reply template (meaning --reply-channel is required).
+    pub fn requires_reply_channel(&self) -> bool {
+        self.reply.is_some()
+    }
+}
+
+/// Top-level YAML config (`$ORCA_HOME/config.yaml`).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct OrcaConfig {
+    pub watchdog_quiet_secs: Option<u64>,
+    pub max_depth: Option<u32>,
+    pub max_workers: Option<u32>,
+    #[serde(default)]
+    pub gateways: HashMap<String, GatewayConfig>,
+}
+
+/// Load and cache the YAML config file.
+pub fn load_config() -> &'static OrcaConfig {
+    static CONFIG: OnceLock<OrcaConfig> = OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let path = orca_home().join("config.yaml");
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => serde_yaml::from_str(&contents).unwrap_or_default(),
+            Err(_) => OrcaConfig::default(),
+        }
+    })
+}
+
+/// Look up a custom gateway by name.
+pub fn gateway(name: &str) -> Option<&'static GatewayConfig> {
+    load_config().gateways.get(name)
+}
+
+/// Return all configured gateway names.
+pub fn gateway_names() -> Vec<&'static str> {
+    load_config().gateways.keys().map(|s| s.as_str()).collect()
+}
 
 /// Return the orca home directory (`$ORCA_HOME` or `~/.orca`).
 pub fn orca_home() -> &'static PathBuf {
@@ -76,6 +133,7 @@ pub fn watchdog_quiet_secs() -> u64 {
     env::var("ORCA_WATCHDOG_QUIET_SECS")
         .ok()
         .and_then(|v| v.parse().ok())
+        .or(load_config().watchdog_quiet_secs)
         .unwrap_or(120)
 }
 
@@ -83,6 +141,7 @@ pub fn max_depth() -> u32 {
     env::var("ORCA_MAX_DEPTH")
         .ok()
         .and_then(|v| v.parse().ok())
+        .or(load_config().max_depth)
         .unwrap_or(3)
 }
 
@@ -90,6 +149,7 @@ pub fn max_workers_per_orchestrator() -> u32 {
     env::var("ORCA_MAX_WORKERS")
         .ok()
         .and_then(|v| v.parse().ok())
+        .or(load_config().max_workers)
         .unwrap_or(10)
 }
 

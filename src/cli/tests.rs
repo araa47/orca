@@ -131,7 +131,7 @@ fn validate_accepts_all_valid_orchestrators() {
         allow_no_orchestrator: true,
         allow_openclaw_without_reply: true,
     };
-    for orch in VALID_ORCHESTRATORS {
+    for orch in BUILTIN_ORCHESTRATORS {
         validate_spawn_context(orch, "root", "", None, &workers, "", "", &env_permissive)
             .unwrap_or_else(|e| panic!("should accept orchestrator '{orch}': {e}"));
     }

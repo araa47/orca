@@ -269,3 +269,70 @@ fn watchdog_quiet_secs_invalid_env_uses_default() {
         .unwrap_or(120);
     assert_eq!(val, 120);
 }
+
+// --- YAML config parsing ---
+
+#[test]
+fn orca_config_deserialize_empty() {
+    let cfg: OrcaConfig = serde_yaml::from_str("").unwrap_or_default();
+    assert!(cfg.gateways.is_empty());
+    assert!(cfg.max_depth.is_none());
+}
+
+#[test]
+fn orca_config_deserialize_full() {
+    let yaml = r#"
+watchdog_quiet_secs: 300
+max_depth: 5
+max_workers: 20
+gateways:
+  hermes:
+    wake: 'hermes chat -q "{text}"'
+    reply: 'hermes chat -q "send to {channel}: {text}"'
+  mybot:
+    wake: 'mybot notify "{text}"'
+"#;
+    let cfg: OrcaConfig = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(cfg.watchdog_quiet_secs, Some(300));
+    assert_eq!(cfg.max_depth, Some(5));
+    assert_eq!(cfg.max_workers, Some(20));
+    assert_eq!(cfg.gateways.len(), 2);
+
+    let hermes = &cfg.gateways["hermes"];
+    assert!(hermes.wake.is_some());
+    assert!(hermes.reply.is_some());
+    assert!(hermes.requires_reply_channel());
+
+    let mybot = &cfg.gateways["mybot"];
+    assert!(mybot.wake.is_some());
+    assert!(mybot.reply.is_none());
+    assert!(!mybot.requires_reply_channel());
+}
+
+#[test]
+fn orca_config_deserialize_gateways_only() {
+    let yaml = r#"
+gateways:
+  hermes:
+    wake: 'hermes chat -q "{text}"'
+"#;
+    let cfg: OrcaConfig = serde_yaml::from_str(yaml).unwrap();
+    assert!(cfg.max_depth.is_none());
+    assert_eq!(cfg.gateways.len(), 1);
+}
+
+#[test]
+fn gateway_config_default() {
+    let gw = GatewayConfig::default();
+    assert!(gw.wake.is_none());
+    assert!(gw.reply.is_none());
+    assert!(!gw.requires_reply_channel());
+}
+
+#[test]
+fn load_config_returns_consistent_value() {
+    let a = load_config();
+    let b = load_config();
+    // OnceLock returns the same reference
+    assert!(std::ptr::eq(a, b));
+}

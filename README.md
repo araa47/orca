@@ -157,6 +157,7 @@ For the full design — lifecycle, notifications, isolation, stuck-worker handli
 - **Codex** — `--orchestrator cx` — message to tmux pane
 - **Cursor** — `--orchestrator cu` — message to tmux pane (sent 3x)
 - **OpenClaw** — `--orchestrator openclaw` — notification via `openclaw system event`
+- **Custom** — `--orchestrator <name>` — any agent with a gateway in `config.yaml` (e.g. Hermes)
 - **None** — `--orchestrator none` — no notification, check with `orca list`
 
 ---
@@ -211,6 +212,29 @@ Full command reference lives in [`skills/orca/SKILL.md`](skills/orca/SKILL.md) �
 
 ## Configuration
 
+Orca reads `~/.orca/config.yaml` (or `$ORCA_HOME/config.yaml`). See [`config.example.yaml`](config.example.yaml) for all options.
+
+```bash
+cp config.example.yaml ~/.orca/config.yaml
+```
+
+### Custom Orchestrator Gateways
+
+Define shell command templates for agents not built into Orca (e.g. Hermes, webhooks):
+
+```yaml
+gateways:
+  hermes:
+    wake: 'hermes chat -q "{text}"'
+    reply: 'hermes chat -q "Use the send_message tool to send to {channel}: {text}"'
+```
+
+Then spawn with `--orchestrator hermes`. Templates support `{text}`, `{worker}`, `{channel}`, `{target}`, `{thread}` placeholders.
+
+### Environment Variables
+
+Env vars override YAML values when set.
+
 | Environment Variable | Default | Description |
 |---|---|---|
 | `ORCA_MAX_DEPTH` | `3` | Maximum nesting depth for sub-workers |
@@ -225,6 +249,7 @@ Full command reference lives in [`skills/orca/SKILL.md`](skills/orca/SKILL.md) �
 |---|---|
 | [**SPEC.md**](SPEC.md) | Human-readable design spec — how Orca works, use cases, lifecycle |
 | [**ARCHITECTURE.md**](ARCHITECTURE.md) | Technical architecture — module graph, data flow, runtime state |
+| [**config.example.yaml**](config.example.yaml) | Example config — custom gateways, tuning knobs |
 | [**skills/orca/SKILL.md**](skills/orca/SKILL.md) | CLI reference — what agents read to learn Orca |
 | [**skills/sprint-team/SKILL.md**](skills/sprint-team/SKILL.md) | Optional sprint workflow with structured roles |
 | [**CHANGELOG.md**](CHANGELOG.md) | Version history |

@@ -207,11 +207,24 @@ fn env_flag(key: &str) -> bool {
     matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes")
 }
 
-const VALID_ORCHESTRATORS: &[&str] = &[
+const BUILTIN_ORCHESTRATORS: &[&str] = &[
     "cc", "cx", "cu", "claude", "codex", "cursor", "openclaw", "none",
 ];
 
-/// Enforce agent-safe spawn defaults: real orchestrator, OpenClaw reply routing, valid parent links.
+/// Check whether an orchestrator name is valid (builtin or configured gateway).
+fn is_valid_orchestrator(name: &str) -> bool {
+    BUILTIN_ORCHESTRATORS.contains(&name) || config::gateway(name).is_some()
+}
+
+/// Check whether an orchestrator requires --reply-channel.
+fn orchestrator_requires_reply(name: &str) -> bool {
+    if name == "openclaw" {
+        return true;
+    }
+    config::gateway(name).is_some_and(|gw| gw.requires_reply_channel())
+}
+
+/// Enforce agent-safe spawn defaults: real orchestrator, reply routing, valid parent links.
 #[allow(clippy::too_many_arguments)]
 fn validate_spawn_context(
     orchestrator: &str,
@@ -223,10 +236,16 @@ fn validate_spawn_context(
     reply_to: &str,
     env: &SpawnValidateEnv,
 ) -> Result<(), String> {
-    if !VALID_ORCHESTRATORS.contains(&orchestrator) {
+    if !is_valid_orchestrator(orchestrator) {
+        let gw_names = config::gateway_names();
+        let custom_hint = if gw_names.is_empty() {
+            String::new()
+        } else {
+            format!(" Custom gateways: {}.", gw_names.join(", "))
+        };
         return Err(format!(
             "Error: unknown --orchestrator '{orchestrator}'. \
-             Valid values: cc, cx, cu, openclaw (or long forms: claude, codex, cursor). \
+             Valid values: cc, cx, cu, openclaw (or long forms: claude, codex, cursor).{custom_hint} \
              Use 'none' only with ORCA_ALLOW_SPAWN_WITHOUT_ORCHESTRATOR=1."
         ));
     }
@@ -238,16 +257,15 @@ fn validate_spawn_context(
                 .into(),
         );
     }
-    if orchestrator == "openclaw"
+    if orchestrator_requires_reply(orchestrator)
         && (reply_channel.is_empty() || reply_to.is_empty())
         && !env.allow_openclaw_without_reply
     {
-        return Err(
-            "Error: --orchestrator openclaw requires --reply-channel and --reply-to. \
+        return Err(format!(
+            "Error: --orchestrator {orchestrator} requires --reply-channel and --reply-to. \
              Without them the user may not see completion events. \
              Set ORCA_ALLOW_OPENCLAW_WITHOUT_REPLY=1 only for automation."
-                .into(),
-        );
+        ));
     }
     if raw_spawned_by.trim().is_empty() {
         return Err("Error: --spawned-by is required. \

@@ -34,6 +34,17 @@ mkdir -p ~/.openclaw/skills
 cp -r /tmp/orca/skills/orca ~/.openclaw/skills/orca
 ```
 
+## Configure (optional)
+
+Copy the example config to set up custom orchestrator gateways (e.g. Hermes, webhooks):
+
+```bash
+cp /tmp/orca/config.example.yaml ~/.orca/config.yaml
+# Edit to add your gateways, then use --orchestrator <name> when spawning
+```
+
+See [`config.example.yaml`](../../../config.example.yaml) for all options and placeholder docs. Settings like `max_depth` and `max_workers` can also be set here instead of env vars.
+
 ## Install hooks
 
 Orca uses hooks to detect when workers finish. This wires into Claude Code's stop hook and Codex's notify system. Cursor has no native hooks — orca injects reporting instructions into the prompt instead.
