@@ -162,6 +162,17 @@ pub fn detect_prompt(output: &str) -> PromptInfo {
     // --- Complex blockers ---
     for cp in COMPLEX_PATTERNS.iter() {
         if cp.re.is_match(&collapsed) {
+            // Avoid false positives from rate-limit recovery messages injected
+            // by the orchestrator (e.g. "The rate limit has cleared").  Without
+            // this guard the daemon re-detects "rate limit" in its own recovery
+            // text and escalates again, creating a feedback loop.
+            if cp.label == "rate_limit"
+                && (collapsed.contains("cleared")
+                    || collapsed.contains("resolved")
+                    || collapsed.contains("lifted"))
+            {
+                continue;
+            }
             return PromptInfo::complex(cp.label, last_n_lines(output, 10));
         }
     }

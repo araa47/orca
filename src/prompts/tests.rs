@@ -165,6 +165,24 @@ fn detects_rate_limit() {
 }
 
 #[test]
+fn rate_limit_cleared_is_not_blocker() {
+    let output = "Continue with your task. The rate limit has cleared. \
+                  If you already opened a PR, you're done.";
+    let info = detect_prompt(output);
+    assert_eq!(
+        info.kind, "none",
+        "recovery message containing 'rate limit' + 'cleared' should not trigger"
+    );
+}
+
+#[test]
+fn rate_limit_resolved_is_not_blocker() {
+    let output = "The rate limit has been resolved. Continue working.";
+    let info = detect_prompt(output);
+    assert_eq!(info.kind, "none");
+}
+
+#[test]
 fn rate_limit_429_word_boundary() {
     let output = "token abc4291def granted";
     let info = detect_prompt(output);
