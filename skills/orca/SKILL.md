@@ -58,16 +58,18 @@ orca spawn "fix the login bug" -b cc -d ~/proj --orchestrator openclaw \
 | `--spawned-by openclaw` | **Yes** | L0 orchestrator marker |
 | `--reply-channel` | **Yes** | `slack`, `telegram`, `discord`, etc. |
 | `--reply-to` | **Yes** | Channel ID or user ID for delivery |
-| `--reply-thread` | No | Thread ID for threaded replies (Slack) |
+| `--reply-thread` | **Yes, if in a thread** | Set to the `topic_id` from the inbound message metadata. Required when the user is in Slack thread mode — omitting it causes the completion notification to land in the DM/channel root instead of the thread. |
 | `--session-id` | No | OpenClaw session ID for scoped killall/gc |
 | `--pane` | No | Not used — OpenClaw delivers via system events, not tmux panes |
 
 **Without `--reply-channel` and `--reply-to`, `orca spawn` will fail.** Set `ORCA_ALLOW_OPENCLAW_WITHOUT_REPLY=1` only for automation.
 
+> **Thread mode rule:** If the inbound message metadata contains a `topic_id` (Slack thread), always pass `--reply-thread <topic_id>`. The `topic_id` is the root message's `thread_ts`. Note: `--session-id` and `--reply-thread` are separate concerns — `--session-id` controls which OpenClaw session gets woken on completion; `--reply-thread` controls where the completion notification is delivered.
+
 **When you receive the completion event:**
 1. Run `orca logs <name>` to review the output
 2. Summarize the results (include PR links if any)
-3. Send the summary via `openclaw message send --channel <ch> --target <target> --message <summary>`
+3. Send the summary via `openclaw message send --channel <ch> --target <target> [--thread-id <thread>] --message <summary>` (include `--thread-id` if spawned from a thread)
 4. Do NOT reply in-session — the user won't see that. Use `openclaw message send`.
 
 ---
