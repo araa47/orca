@@ -1184,7 +1184,7 @@ fn cmd_killall(mut pane: String, session_id: String, mine: bool, force: bool, no
 
     // Sort deepest-first so child worktrees are removed before parents
     let mut sorted: Vec<(String, Worker)> = killable.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.depth.cmp(&a.1.depth));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.1.depth));
 
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     for (wname, w) in &sorted {
@@ -1262,7 +1262,7 @@ fn cmd_gc(mut pane: String, session_id: String, mine: bool, force: bool, no_stas
         })
         .collect();
     // Sort deepest-first so child worktrees are removed before parents
-    to_gc.sort_by(|a, b| b.1.depth.cmp(&a.1.depth));
+    to_gc.sort_by_key(|b| std::cmp::Reverse(b.1.depth));
 
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     for (name, w) in &to_gc {
@@ -1460,7 +1460,7 @@ fn print_tree(workers: &HashMap<String, Worker>) {
             real_workers.insert(name, w);
         }
     }
-    l0_entries.sort_by(|a, b| a.name.cmp(&b.name));
+    l0_entries.sort_by_key(|a| a.name.clone());
 
     // Group children by parent
     let mut children: HashMap<String, Vec<String>> = HashMap::new();
