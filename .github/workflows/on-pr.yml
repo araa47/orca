@@ -32,6 +32,7 @@ jobs:
               with:
                   name: coverage-comment
             - name: Post coverage report to PR
+              continue-on-error: true
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
