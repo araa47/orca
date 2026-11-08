@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency refresh:** bumped `rand` 0.9 → 0.10, `which` 7 → 8, `dirs` 6 → 7, `md5` 0.7 → 0.8, and refreshed `Cargo.lock` to the latest compatible releases. Bumped GitHub Actions (`checkout` v7, `cache` v6, `upload-artifact` v7, `download-artifact` v8) and the codespell pre-commit hook (v2.4.3).
+
+### Security
+
+- Resolved RUSTSEC-2026-0190 (`anyhow`, dropped from the lockfile), RUSTSEC-2026-0097 (`rand` 0.9.2) and RUSTSEC-2026-0386 (`tokio` 1.50.0) by upgrading; `cargo audit` is clean.
+
 ### Fixed
 
 - **OpenClaw `uv_cwd` / ENOENT when the worktree is gone:** the daemon and its subprocesses no longer rely on an inherited cwd that may already be removed. The daemon moves to a stable directory at startup (home when present, else `/`), the post-fork chdir uses the same logic, and the tmux control-mode child is spawned with that cwd. This prevents Node/libuv from failing before `openclaw system event` can run.
