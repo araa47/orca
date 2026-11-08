@@ -10,7 +10,7 @@ jobs:
         permissions:
             contents: read
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
 
             - name: Setup mold linker
               uses: rui314/setup-mold@v1
@@ -27,7 +27,7 @@ jobs:
               uses: taiki-e/install-action@cargo-nextest
 
             - name: Cache cargo registry & build
-              uses: actions/cache@v4
+              uses: actions/cache@v6
               with:
                   path: |
                       ~/.cargo/registry
@@ -91,7 +91,7 @@ jobs:
 
             - name: Upload coverage comment
               if: github.event_name == 'pull_request'
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: coverage-comment
                   path: comment-body.md
